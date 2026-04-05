@@ -100,10 +100,7 @@ Lee el CSV fuente en chunks de 50.000 filas y lo guarda en `data/raw/raw.csv`.
 - Guarda `clean.csv`, `type_dict.json`, `encodings.json` en `data/processed/`
 
 ### eda
-- Resúmenes estadísticos de columnas numéricas y categóricas
-- Histogramas, boxplots, scatter matrix y barplots
-- Detección y capping de outliers con método IQR
-- Guarda gráficos en `data/eda/plots/` y `clean_no_outliers.csv`
+
 
 ### preprocessing
 - Normalización con `StandardScaler`
@@ -113,8 +110,6 @@ Lee el CSV fuente en chunks de 50.000 filas y lo guarda en `data/raw/raw.csv`.
 - Guarda `preprocessed.csv`, `pca.csv`, `scaler.pkl`, `pca.pkl` en `data/processed/`
 
 ### load
-- Lee `preprocessed.csv` y envía cada fila como mensaje JSON a Kafka
-- Topic y servidor configurables por variables de entorno (`KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_TOPIC`)
 
 ---
 
