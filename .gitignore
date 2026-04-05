@@ -1,0 +1,18 @@
+# Dataset
+*.csv
+
+# Airflow
+airflow.db
+airflow.db-shm
+airflow.db-wal
+airflow.cfg
+logs/
+simple_auth_manager_passwords.json.generated
+
+# Data outputs (generated files)
+data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
