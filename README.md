@@ -100,7 +100,12 @@ Lee el CSV fuente en chunks de 50.000 filas y lo guarda en `data/raw/raw.csv`.
 - Guarda `clean.csv`, `type_dict.json`, `encodings.json` en `data/processed/`
 
 ### eda
-
+- Genera gráficos de distribución (histograma con curva KDE y boxplot) para cada variable numérica.
+- Calcula valores atípicos mediante rango intercuartílico (IQR) y la matriz de correlación de Pearson.
+- Crea gráficos de barras legibles para frecuencias de variables categóricas y booleanas, revirtiendo temporalmente el encoding.
+- Construye mapas de calor de co-ocurrencia (heatmaps) para los elementos más comunes dentro de las listas JSON.
+- Dibuja una matriz de dispersión multivariable utilizando una muestra representativa para evitar el agotamiento de memoria.
+- Guarda las imágenes organizadas por tipo de dato en la carpeta `eda/` y exporta la metadata `numeric_stats.json` en `data/processed/`.
 
 ### preprocessing
 - Normalización con `StandardScaler`
