@@ -19,25 +19,50 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
+NUMERIC_CATEGORICAL_THRESHOLD = 20  # columnas numéricas con <= 20 valores únicos → numeric_categorical
+NUMERIC_DISCRETE_THRESHOLD = 200    # columnas enteras con <= 200 valores únicos → numeric_discrete
+
+
+def classify_numeric(series):
+    """
+    Subclasifica una serie numérica en:
+      - numeric_categorical -> pocos valores únicos, probablemente una categoría codificada
+      - numeric_discrete    -> valores enteros con cardinalidad moderada
+      - numeric_continuous  -> valores continuos (float o muchos enteros únicos)
+    """
+    n_unique = series.nunique()
+
+    if n_unique <= NUMERIC_CATEGORICAL_THRESHOLD:
+        return "numeric_categorical"
+
+    is_integer_valued = (series.dropna() % 1 == 0).all()
+    if is_integer_valued and n_unique <= NUMERIC_DISCRETE_THRESHOLD:
+        return "numeric_discrete"
+
+    return "numeric_continuous"
+
+
 def detect_column_type(series):
     """
     Clasifica una columna en uno de estos tipos:
-      - numeric-> números (int o float)
-      - boolean -> solo valores Y / N
-      - list_json -> listas o dicts en formato JSON (empieza con [ o {)
-      - list_csv -> listas separadas por comas (ej: "Lunch, Dinner")
+      - numeric_continuous  -> números continuos (float o muchos valores únicos)
+      - numeric_discrete    -> enteros con cardinalidad moderada
+      - numeric_categorical -> numérica con pocos valores únicos (probablemente categoría)
+      - boolean    -> solo valores Y / N
+      - list_json  -> listas o dicts en formato JSON (empieza con [ o {)
+      - list_csv   -> listas separadas por comas (ej: "Lunch, Dinner")
       - categorical -> texto plano
     """
     series = series.dropna()
 
     # ¿Es numérica?
     if pd.api.types.is_numeric_dtype(series):
-        return "numeric"
+        return classify_numeric(series)
 
     # ¿Se puede convertir a número?
     try:
-        pd.to_numeric(series)
-        return "numeric"
+        numeric_series = pd.to_numeric(series)
+        return classify_numeric(numeric_series)
     except (ValueError, TypeError):
         pass
 
@@ -101,9 +126,12 @@ def clean():
     # Calcular valores de imputación y encoding recorriendo el CSV
     log.info("Paso 3: calculando estadísticas para imputación y encoding...")
 
+    NUMERIC_TYPES = {"numeric_continuous", "numeric_discrete"}
+    CATEGORICAL_LIKE = {"categorical", "boolean", "numeric_categorical"}
+
     # Acumulamos valores numéricos y conteos de categorías
-    numeric_values = {col: [] for col, t in type_dict.items() if t == "numeric"}
-    category_counts = {col: {} for col, t in type_dict.items() if t in ("categorical", "boolean")}
+    numeric_values = {col: [] for col, t in type_dict.items() if t in NUMERIC_TYPES}
+    category_counts = {col: {} for col, t in type_dict.items() if t in CATEGORICAL_LIKE}
 
     for i, chunk in enumerate(pd.read_csv(RAW_CSV, usecols=keep_columns, chunksize=CHUNK_SIZE, low_memory=False)):
         for col in numeric_values:
@@ -118,16 +146,16 @@ def clean():
     # Valor de imputación por columna
     fill_values = {}
     for col, dtype in type_dict.items():
-        if dtype == "numeric":
+        if dtype in NUMERIC_TYPES:
             vals = numeric_values.get(col, [])
             fill_values[col] = float(np.median(vals)) if vals else 0.0
-        elif dtype in ("categorical", "boolean"):
+        elif dtype in CATEGORICAL_LIKE:
             counts = category_counts.get(col, {})
             fill_values[col] = max(counts, key=counts.get) if counts else ""
         else:
             fill_values[col] = ""  # listas → cadena vacía
 
-    # Encoding-> asignamos un entero a cada valor único de columnas categóricas/booleanas
+    # Encoding -> asignamos un entero a cada valor único de columnas categóricas/booleanas y numeric_categorical
     encodings = {}
     for col, counts in category_counts.items():
         sorted_values = sorted(counts.keys())
@@ -149,7 +177,7 @@ def clean():
 
         # Convertir columnas numéricas que quedaron como string
         for col, dtype in type_dict.items():
-            if dtype == "numeric" and col in chunk.columns:
+            if dtype in NUMERIC_TYPES and col in chunk.columns:
                 chunk[col] = pd.to_numeric(chunk[col], errors="coerce").fillna(fill_values[col])
 
         # Label encoding-> reemplazar strings por su código entero

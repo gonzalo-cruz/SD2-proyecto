@@ -215,8 +215,8 @@ def eda():
     for col, mapping in encodings.items():
         reverse_encodings[col] = {str(v): k for k, v in mapping.items()}
 
-    numeric_cols = [c for c, t in type_dict.items() if t == "numeric"]
-    categorical_cols = [c for c, t in type_dict.items() if t in ["categorical", "boolean"]]
+    numeric_cols = [c for c, t in type_dict.items() if t in ("numeric_continuous", "numeric_discrete", "numeric_categorical")]
+    categorical_cols = [c for c, t in type_dict.items() if t in ("categorical", "boolean")]
     list_cols = [c for c, t in type_dict.items() if t == "list_json"]
 
     # Diccionario para almacenar la metadata de variables numéricas

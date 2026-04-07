@@ -34,11 +34,11 @@ def preprocessing():
         encodings = json.load(f)
 
     # Separamos columnas por cmo las vamos a tratar
-    numeric_cols = [c for c, t in type_dict.items() if t == "numeric"]
+    numeric_cols = [c for c, t in type_dict.items() if t in ("numeric_continuous", "numeric_discrete")]
     ohe_cols     = [c for c, t in type_dict.items()
-                    if t == "encoded_categorical" and len(encodings.get(c, {})) <= OHE_MAX_CARDINALITY]
+                    if t in ("categorical", "boolean", "numeric_categorical") and len(encodings.get(c, {})) <= OHE_MAX_CARDINALITY]
     label_cols   = [c for c, t in type_dict.items()
-                    if t == "encoded_categorical" and len(encodings.get(c, {})) > OHE_MAX_CARDINALITY]
+                    if t in ("categorical", "boolean", "numeric_categorical") and len(encodings.get(c, {})) > OHE_MAX_CARDINALITY]
     passthrough  = [c for c, t in type_dict.items() if t in ("list_json", "list_csv")]
 
     log.info("Numericas: %d | OHE: %d | Label encoding: %d | Sin cambios: %d",
