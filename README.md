@@ -62,7 +62,7 @@ proyecto/
 
 ### 1. Descargar el dataset
 
-Descarga el dataset desde [Kaggle](https://www.kaggle.com/datasets/stefanoleone992/tripadvisor-european-restaurants/data) y coloca el fichero `tripadvisor_european_restaurants.csv` en la raíz del proyecto. La task `extract` lo tomará de ahí y generará `data/raw/raw.csv` automáticamente.
+Descarga el dataset desde [Kaggle](https://www.kaggle.com/datasets/stefanoleone992/tripadvisor-european-restaurants/data) y coloca el fichero `tripadvisor_european_restaurants.csv` en la raíz del proyecto. La task `extract` lo cogerá de ahí y generará `data/raw/raw.csv` automáticamente.
 
 ### 2. Instalar dependencias
 
@@ -71,7 +71,7 @@ cd sd2/proyecto
 uv sync
 ```
 
-### 3. Levantar Airflow
+### 2. Levantar Airflow
 
 ```bash
 AIRFLOW_HOME=$(pwd) uv run airflow standalone
@@ -79,7 +79,7 @@ AIRFLOW_HOME=$(pwd) uv run airflow standalone
 
 La UI queda en **http://localhost:8080**. Las credenciales se generan en `simple_auth_manager_passwords.json.generated`.
 
-### 4. Lanzar el pipeline
+### 3. Lanzar el pipeline
 
 Desde la UI: activar el toggle del DAG `tripadvisor_pipeline` → **Trigger DAG**.
 
@@ -89,7 +89,7 @@ O desde terminal:
 AIRFLOW_HOME=$(pwd) uv run airflow dags trigger tripadvisor_pipeline
 ```
 
-### 5. Ejecutar una task individualmente (si se quiere probar)
+### 4. Ejecutar una task individualmente (si se quiere probar)
 
 ```bash
 uv run python -m tasks.extract
@@ -100,7 +100,7 @@ uv run python -m tasks.preprocessing
 
 > **Nota**: la task `load` requiere un broker de Kafka corriendo
 
-### 6. Levantar Kafka (necesario para la task `load`)
+### 5. Levantar Kafka (necesario para la task `load`)
 
 ```bash
 docker run -d --name kafka -p 9092:9092 apache/kafka:latest
