@@ -9,7 +9,7 @@ Pipeline de datos con Apache Airflow para procesar el dataset de restaurantes eu
 ```
 proyecto/
 ├── dags/
-│   └── pipeline.py        
+│   └── pipeline.py                  # Definición del DAG de Airflow
 ├── tasks/
 │   ├── extract.py
 │   ├── clean.py
@@ -18,9 +18,36 @@ proyecto/
 │   └── load.py
 ├── data/
 │   ├── raw/
-│   ├── processed/
-│   └── eda/
-└── pyproject.toml
+│   │   └── raw.csv                  # Salida de extract
+│   └── processed/
+│       ├── clean.csv                # Salida de clean
+│       ├── type_dict.json
+│       ├── encodings.json
+│       ├── processing_hints.json
+│       ├── cuisines.json            # Columnas de listas extraídas
+│       ├── meals.json
+│       ├── top_tags.json
+│       ├── original_location.json
+│       ├── original_open_hours.json
+│       ├── summary_stats.json       # Salida de eda
+│       ├── numeric_stats.json
+│       ├── preprocessed.csv         # Salida de preprocessing
+│       ├── pca.csv
+│       ├── scaler.pkl
+│       ├── pca.pkl
+│       ├── ohe_mappings.json
+│       └── pca_explained_variance.json
+├── eda/
+│   ├── numeric/                     # Histogramas + boxplots
+│   ├── categorical/                 # Gráficos de barras
+│   ├── boolean/
+│   ├── list_json/                   # Heatmaps de co-ocurrencia
+│   └── scatters/                    # Matriz de dispersión
+├── config.toml                      # Parámetros configurables del pipeline
+├── informe.md
+├── grafo_pipeline.png
+├── pyproject.toml
+└── tripadvisor_european_restaurants.csv
 ```
 
 ---
@@ -33,14 +60,18 @@ proyecto/
 
 ## Cómo ejecutar
 
-### 1. Instalar dependencias
+### 1. Descargar el dataset
+
+Descarga el dataset desde [Kaggle](https://www.kaggle.com/datasets/stefanoleone992/tripadvisor-european-restaurants/data) y coloca el fichero `tripadvisor_european_restaurants.csv` en la raíz del proyecto. La task `extract` lo tomará de ahí y generará `data/raw/raw.csv` automáticamente.
+
+### 2. Instalar dependencias
 
 ```bash
 cd sd2/proyecto
 uv sync
 ```
 
-### 2. Levantar Airflow
+### 3. Levantar Airflow
 
 ```bash
 AIRFLOW_HOME=$(pwd) uv run airflow standalone
@@ -48,7 +79,7 @@ AIRFLOW_HOME=$(pwd) uv run airflow standalone
 
 La UI queda en **http://localhost:8080**. Las credenciales se generan en `simple_auth_manager_passwords.json.generated`.
 
-### 3. Lanzar el pipeline
+### 4. Lanzar el pipeline
 
 Desde la UI: activar el toggle del DAG `tripadvisor_pipeline` → **Trigger DAG**.
 
@@ -58,7 +89,7 @@ O desde terminal:
 AIRFLOW_HOME=$(pwd) uv run airflow dags trigger tripadvisor_pipeline
 ```
 
-### 4. Ejecutar una task individualmente (si se quiere probar)
+### 5. Ejecutar una task individualmente (si se quiere probar)
 
 ```bash
 uv run python -m tasks.extract
@@ -69,7 +100,7 @@ uv run python -m tasks.preprocessing
 
 > **Nota**: la task `load` requiere un broker de Kafka corriendo
 
-### 5. Levantar Kafka (necesario para la task `load`)
+### 6. Levantar Kafka (necesario para la task `load`)
 
 ```bash
 docker run -d --name kafka -p 9092:9092 apache/kafka:latest
