@@ -1,0 +1,7 @@
+# Columns to exclude from list detection
+# Add any columns here that contain commas but should NOT be treated as lists
+no_list = [
+    "address",
+    "full_name",
+    "description"
+]
