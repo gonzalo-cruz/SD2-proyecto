@@ -1,3 +1,24 @@
+[general]
+chunk_size = 50_000
+
+[kafka]
+bootstrap_servers = "localhost:9092"
+topic = "restaurants"
+batch_size = 500
+
+[clean]
+null_threshold = 0.70 # columns with more than this fraction of nulls are dropped
+numeric_categorical_threshold = 20  # numeric columns with <= this many unique values → numeric_categorical
+
+[eda]
+top_n_categories = 20 
+top_n_cooccurrence = 15 
+scatter_sample_rows = 10_000 
+plot_dpi = 150
+
+[preprocessing]
+ohe_max_cardinality = 15 # categorical columns with <= this many unique values use OHE; above → label encoding
+
 # Columns to exclude from list detection
 # Add any columns here that contain commas but should NOT be treated as lists
 no_list = [

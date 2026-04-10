@@ -25,6 +25,12 @@ proyecto/
 
 ---
 
+## Requisitos
+
+- Python 3.11+
+- [uv](https://github.com/astral-sh/uv) — gestiona las dependencias (incluye Airflow)
+- Docker (para Kafka)
+
 ## Cómo ejecutar
 
 ### 1. Instalar dependencias
@@ -68,6 +74,19 @@ uv run python -m tasks.preprocessing
 ```bash
 docker run -d --name kafka -p 9092:9092 apache/kafka:latest
 ```
+
+Luego crea el topic necesario:
+
+```bash
+docker exec kafka /opt/kafka/bin/kafka-topics.sh \
+  --create \
+  --topic restaurants \
+  --bootstrap-server localhost:9092 \
+  --partitions 1 \
+  --replication-factor 1
+```
+
+> Si el contenedor ya existe de una sesión anterior, usa `docker start kafka` en lugar de `docker run`.
 
 Para comprobar que está corriendo:
 
@@ -115,6 +134,25 @@ Lee el CSV fuente en chunks de 50.000 filas y lo guarda en `data/raw/raw.csv`.
 - Guarda `preprocessed.csv`, `pca.csv`, `scaler.pkl`, `pca.pkl` en `data/processed/`
 
 ### load
+Envía cada fila de `preprocessed.csv` a un topic de Kafka como mensaje JSON. Usa un productor con confirmación (`acks=all`) y procesa en sub-batches para controlar el uso de memoria.
+
+---
+
+## Configuración
+
+El archivo `config.toml` centraliza todos los parámetros del pipeline:
+
+| Sección | Clave | Descripción |
+|---|---|---|
+| `[general]` | `chunk_size` | Filas leídas por batch en todos los tasks |
+| `[clean]` | `null_threshold` | Fracción de nulos para eliminar una columna |
+| `[clean]` | `numeric_categorical_threshold` | Valores únicos máximos para clasificar como `numeric_categorical` |
+| `[eda]` | `top_n_categories` | Categorías mostradas en gráficos de barras |
+| `[eda]` | `top_n_cooccurrence` | Elementos en heatmaps de co-ocurrencia |
+| `[eda]` | `scatter_sample_rows` | Filas muestreadas para la matriz de dispersión |
+| `[eda]` | `plot_dpi` | Resolución de las imágenes generadas |
+| `[preprocessing]` | `ohe_max_cardinality` | Cardinalidad máxima para OHE (por encima → label encoding) |
+| `[kafka]` | `bootstrap_servers`, `topic`, `batch_size` | Conexión y configuración del productor Kafka |
 
 ---
 

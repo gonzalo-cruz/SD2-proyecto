@@ -1,4 +1,5 @@
 import logging
+import tomllib
 import pandas as pd
 from pathlib import Path
 
@@ -6,7 +7,10 @@ from pathlib import Path
 SOURCE_CSV = Path(__file__).parent.parent / "tripadvisor_european_restaurants.csv"
 OUTPUT_CSV = Path(__file__).parent.parent / "data" / "raw" / "raw.csv"
 
-CHUNK_SIZE = 50_000
+with open(Path(__file__).parent.parent / "config.toml", "rb") as _f:
+    _config = tomllib.load(_f)
+
+CHUNK_SIZE = _config["general"]["chunk_size"]
 
 logging.basicConfig(
     level=logging.INFO,

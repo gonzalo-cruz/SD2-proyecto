@@ -1,6 +1,7 @@
 import json
 import logging
 import itertools
+import tomllib
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -13,9 +14,15 @@ PROCESSED_CSV = Path(__file__).parent.parent / "data" / "processed" / "clean.csv
 ARTIFACTS_DIR = Path(__file__).parent.parent / "data" / "processed"
 EDA_DIR = Path(__file__).parent.parent / "eda"
 
-CHUNK_SIZE = 50_000
+with open(Path(__file__).parent.parent / "config.toml", "rb") as _f:
+    _config = tomllib.load(_f)
 
-# Suppress harmless matplotlib warning about plotting string-numbers
+CHUNK_SIZE = _config["general"]["chunk_size"]
+TOP_N_CATEGORIES = _config["eda"]["top_n_categories"]
+TOP_N_COOCCURRENCE = _config["eda"]["top_n_cooccurrence"]
+SCATTER_SAMPLE_ROWS = _config["eda"]["scatter_sample_rows"]
+PLOT_DPI = _config["eda"]["plot_dpi"]
+
 warnings.filterwarnings("ignore", message=".*categorical units to plot a list of strings.*")
 
 logging.basicConfig(
@@ -69,12 +76,12 @@ def plot_numeric(data, column, stats_dict):
     ax_hist.legend()
     
     plt.tight_layout()
-    fig.savefig(EDA_DIR / "numeric" / f"{column}_hist_box.png", dpi=150)
+    fig.savefig(EDA_DIR / "numeric" / f"{column}_hist_box.png", dpi=PLOT_DPI)
     plt.close(fig)
 
 
 # Gráfico de barras para variables categóricas o numéricas discretas (numeric_categorical).
-def plot_categorical(counts, column, reverse_mapping, col_type, top_n=20):
+def plot_categorical(counts, column, reverse_mapping, col_type, top_n=TOP_N_CATEGORIES):
     # Limita a top_n categorías para evitar colapsar matplotlib en alta cardinalidad
     sorted_counts = sorted(counts.items(), key=lambda item: item[1], reverse=True)[:top_n]
 
@@ -98,12 +105,12 @@ def plot_categorical(counts, column, reverse_mapping, col_type, top_n=20):
     plt.tight_layout()
     # Guardamos numeric_categorical en la carpeta categórica
     folder = "categorical" if col_type == "numeric_categorical" else col_type
-    fig.savefig(EDA_DIR / folder / f"{column}_bar.png", dpi=150)
+    fig.savefig(EDA_DIR / folder / f"{column}_bar.png", dpi=PLOT_DPI)
     plt.close(fig)
 
 
 # Matriz de co-ocurrencia. La diagonal tiene las frecuencias individuales de cada palabra.
-def plot_cooccurrence_heatmap(single_counts, pair_counts, column, top_n=15):
+def plot_cooccurrence_heatmap(single_counts, pair_counts, column, top_n=TOP_N_COOCCURRENCE):
     top_elements = [item for item, count in single_counts.most_common(top_n)]
     n = len(top_elements)
     if n == 0:
@@ -220,7 +227,7 @@ def process_list_json_chunked(filepath):
 def plot_scatters(numeric_columns, stats_dict):
     if len(numeric_columns) < 2: return
     log.info("Generando gráficos de dispersión con muestra...")
-    sample_df = pd.read_csv(PROCESSED_CSV, usecols=numeric_columns, nrows=10_000)
+    sample_df = pd.read_csv(PROCESSED_CSV, usecols=numeric_columns, nrows=SCATTER_SAMPLE_ROWS)
     
     corr_matrix = sample_df.corr(method="pearson")
     stats_dict["pearson_correlation"] = corr_matrix.to_dict()
@@ -244,7 +251,7 @@ def plot_scatters(numeric_columns, stats_dict):
             if j == 0: ax.set_ylabel(numeric_columns[i])
                 
     plt.tight_layout()
-    fig.savefig(EDA_DIR / "scatters" / "matriz_dispersion.png", dpi=150)
+    fig.savefig(EDA_DIR / "scatters" / "matriz_dispersion.png", dpi=PLOT_DPI)
     plt.close(fig)
 
 
@@ -335,7 +342,7 @@ def eda():
         summary_stats[col]["total_items_parsed"] = sum(single.values())
         summary_stats[col]["num_unique_elements"] = len(single)
         
-        plot_cooccurrence_heatmap(single, pair, col, top_n=15)
+        plot_cooccurrence_heatmap(single, pair, col, top_n=TOP_N_COOCCURRENCE)
 
     plot_scatters(numeric_cols, numeric_stats)
     

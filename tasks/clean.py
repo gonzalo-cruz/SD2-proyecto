@@ -25,18 +25,12 @@ RAW_CSV = Path(__file__).parent.parent / "data" / "raw" / "raw.csv"
 OUTPUT_DIR = Path(__file__).parent.parent / "data" / "processed"
 CONFIG_FILE = Path(__file__).parent.parent / "config.toml"
 
-CHUNK_SIZE = 50_000
-NULL_THRESHOLD = 0.70  # columnas con más del 70% de nulos se eliminan
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger(__name__)
-
-
-NUMERIC_CATEGORICAL_THRESHOLD = 20  # columnas numéricas con <= 20 valores únicos → numeric_categorical
 
 
 def load_config():
@@ -52,6 +46,12 @@ def load_config():
     except Exception as e:
         log.warning("Error al leer config.toml: %s", e)
         return {}
+
+
+_cfg = load_config()
+CHUNK_SIZE = _cfg.get("general", {}).get("chunk_size", 50_000)
+NULL_THRESHOLD = _cfg.get("clean", {}).get("null_threshold", 0.70)
+NUMERIC_CATEGORICAL_THRESHOLD = _cfg.get("clean", {}).get("numeric_categorical_threshold", 20)
 
 
 def classify_numeric(series):
@@ -140,7 +140,7 @@ def parse_and_explode_chunk(series: pd.Series, hint: str = None) -> pd.DataFrame
             if not val:
                 return None
             
-            # 1. Intentar parsear como Python/JSON si es 'dict' o 'json'
+            # Intentar parsear como Python/JSON si es 'dict' o 'json'
             if hint in ("dict", "json"):
                 if (val.startswith('[') and val.endswith(']')) or (val.startswith('{') and val.endswith('}')):
                     try:
@@ -152,11 +152,11 @@ def parse_and_explode_chunk(series: pd.Series, hint: str = None) -> pd.DataFrame
                         if val.startswith('[') and val.endswith(']'):
                             val = val[1:-1].strip()
             
-            # 2. Parsear como valores separados por comas si es 'csv' (o como fallback)
+            # Parsear como valores separados por comas si es 'csv' (o como fallback)
             if hint == "csv" or ',' in val:
                 return [item.strip() for item in val.split(',') if item.strip()]
             
-            # 3. Tratar como un string único
+            # Tratar como un string único
             return [val]
             
         return [val]
@@ -189,13 +189,13 @@ def clean():
         total_rows += len(chunk)
 
     null_ratio = null_counts / total_rows
-
+    # quitamos columnas con mas de 70% de nulos
     drop_columns = list(null_ratio[null_ratio > NULL_THRESHOLD].index)
     keep_columns = [c for c in all_columns if c not in drop_columns]
 
     log.info("Columnas eliminadas (>%.0f%% nulos): %s", NULL_THRESHOLD * 100, drop_columns)
     log.info("Columnas que se mantienen: %d / %d", len(keep_columns), len(all_columns))
-
+    # detectamos el tipo de cada columna para tratarla adecuadamente
     log.info("Detectando tipos de columnas...")
     sample = pd.read_csv(RAW_CSV, usecols=keep_columns, nrows=10_000, low_memory=False)
     
@@ -212,7 +212,7 @@ def clean():
     log.info("Tipos detectados: %s", dict(Counter(type_dict.values())))
 
     log.info("Paso 3: calculando estadísticas para imputación y encoding...")
-
+    # calculamos las estadisticas necesarias para despues hacer imputacion y encoding
     NUMERIC_TYPES = {"numeric"}
     CATEGORICAL_LIKE = {"categorical", "boolean", "numeric_categorical"}
 
@@ -228,7 +228,7 @@ def clean():
                 category_counts[col][val] = category_counts[col].get(val, 0) + 1
 
         log.info("  stats batch %d completado", i + 1)
-
+    
     fill_values = {}
     for col, dtype in type_dict.items():
         if dtype in NUMERIC_TYPES:
