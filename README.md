@@ -58,7 +58,7 @@ O desde terminal:
 AIRFLOW_HOME=$(pwd) uv run airflow dags trigger tripadvisor_pipeline
 ```
 
-### 4. Ejecutar una task individualmente (para probar)
+### 4. Ejecutar una task individualmente (si se quiere probar)
 
 ```bash
 uv run python -m tasks.extract
@@ -67,7 +67,7 @@ uv run python -m tasks.eda
 uv run python -m tasks.preprocessing
 ```
 
-> **Nota**: la task `load` requiere un broker de Kafka corriendo (ver sección [Kafka](#kafka) más abajo).
+> **Nota**: la task `load` requiere un broker de Kafka corriendo
 
 ### 5. Levantar Kafka (necesario para la task `load`)
 
