@@ -11,7 +11,7 @@ simple_auth_manager_passwords.json.generated
 
 # Data outputs (generated files)
 data/
-
+eda/
 
 # Python
 __pycache__/
