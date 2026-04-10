@@ -2,6 +2,7 @@ import json
 import logging
 import pandas as pd
 import numpy as np
+import ast
 from pathlib import Path
 
 # Rutas
@@ -20,33 +21,26 @@ log = logging.getLogger(__name__)
 
 
 NUMERIC_CATEGORICAL_THRESHOLD = 20  # columnas numéricas con <= 20 valores únicos → numeric_categorical
-NUMERIC_DISCRETE_THRESHOLD = 200    # columnas enteras con <= 200 valores únicos → numeric_discrete
 
 
 def classify_numeric(series):
     """
     Subclasifica una serie numérica en:
       - numeric_categorical -> pocos valores únicos, probablemente una categoría codificada
-      - numeric_discrete    -> valores enteros con cardinalidad moderada
-      - numeric_continuous  -> valores continuos (float o muchos enteros únicos)
+      - numeric -> cualquier otro valor numérico (discreto o continuo)
     """
     n_unique = series.nunique()
 
     if n_unique <= NUMERIC_CATEGORICAL_THRESHOLD:
         return "numeric_categorical"
 
-    is_integer_valued = (series.dropna() % 1 == 0).all()
-    if is_integer_valued and n_unique <= NUMERIC_DISCRETE_THRESHOLD:
-        return "numeric_discrete"
-
-    return "numeric_continuous"
+    return "numeric"
 
 
 def detect_column_type(series):
     """
     Clasifica una columna en uno de estos tipos:
-      - numeric_continuous  -> números continuos (float o muchos valores únicos)
-      - numeric_discrete    -> enteros con cardinalidad moderada
+      - numeric -> valores numéricos (continuos o discretos con muchos valores)
       - numeric_categorical -> numérica con pocos valores únicos (probablemente categoría)
       - boolean    -> solo valores Y / N
       - list_json  -> listas o dicts en formato JSON (empieza con [ o {)
@@ -84,11 +78,41 @@ def detect_column_type(series):
 
     return "categorical"
 
+
+def parse_and_explode_chunk(series: pd.Series) -> pd.DataFrame:
+    """
+    Analiza las listas en formato texto, las expande y mantiene el índice de la fila original.
+    Devuelve un DataFrame: [{"row_id": 0, "value": "A"}, ...]
+    """
+    series = series.dropna()
+    if series.empty:
+        return pd.DataFrame(columns=["row_id", "value"])
+
+    def parse_val(val):
+        if isinstance(val, str):
+            val = val.strip()
+            if val.startswith('[') and val.endswith(']'):
+                try:
+                    return ast.literal_eval(val)
+                except (ValueError, SyntaxError):
+                    return None
+        return None
+
+    # Convertir strings a listas, descartando errores de parseo
+    parsed = series.apply(parse_val).dropna()
+    
+    # Expandir las listas a un elemento por fila
+    exploded = parsed.explode().dropna()
+    
+    # Mantener el índice global del chunk como 'row_id'
+    return exploded.reset_index(name="value").rename(columns={"index": "row_id"})
+
+
 def clean():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # calcular el % de nulos por columna recorriendo el CSV
-    log.info(" Calculando porcentaje de nulos por columna...")
+    log.info("Calculando porcentaje de nulos por columna...")
 
     null_counts = None
     total_rows = 0
@@ -126,7 +150,7 @@ def clean():
     # Calcular valores de imputación y encoding recorriendo el CSV
     log.info("Paso 3: calculando estadísticas para imputación y encoding...")
 
-    NUMERIC_TYPES = {"numeric_continuous", "numeric_discrete"}
+    NUMERIC_TYPES = {"numeric"}
     CATEGORICAL_LIKE = {"categorical", "boolean", "numeric_categorical"}
 
     # Acumulamos valores numéricos y conteos de categorías
@@ -162,33 +186,70 @@ def clean():
         encodings[col] = {val: idx for idx, val in enumerate(sorted_values)}
 
     # PASO 4: transformar el dataset en batches y guardar
-    log.info("Transformando datos y guardando clean.csv...")
+    log.info("Transformando datos y guardando clean.csv y archivos JSON...")
 
     output_csv = OUTPUT_DIR / "clean.csv"
+    list_json_cols = [col for col, dtype in type_dict.items() if dtype == "list_json"]
+    
+    # Preparar archivos JSON abiertos en modo escritura y escribir inicio de Array
+    json_file_handles = {}
+    is_first_json_chunk = {col: True for col in list_json_cols}
+
+    for col in list_json_cols:
+        f = open(OUTPUT_DIR / f"{col}.json", "w", encoding="utf-8")
+        f.write("[\n")
+        json_file_handles[col] = f
+
     total_rows_written = 0
     first_chunk = True
 
     for i, chunk in enumerate(pd.read_csv(RAW_CSV, usecols=keep_columns, chunksize=CHUNK_SIZE, low_memory=False)):
 
-        # Imputar nulos
+        # 1. Extraer y procesar list_json cols
+        for col in list_json_cols:
+            if col in chunk.columns:
+                exploded_df = parse_and_explode_chunk(chunk[col])
+
+                if not exploded_df.empty:
+                    # Serializar quitando los [ ] extremos de pandas
+                    json_str = exploded_df.to_json(orient="records", force_ascii=False)[1:-1]
+
+                    if json_str.strip():
+                        f = json_file_handles[col]
+                        if not is_first_json_chunk[col]:
+                            f.write(",\n")
+                        f.write(json_str)
+                        is_first_json_chunk[col] = False
+
+                # Eliminar del chunk principal (clean.csv) para que no haya listas serializadas
+                chunk = chunk.drop(columns=[col])
+
+        # 2. Imputar nulos al resto de columnas
         for col, dtype in type_dict.items():
             if col in chunk.columns and chunk[col].isna().any():
-                chunk[col] = chunk[col].fillna(fill_values[col])
+                chunk[col] = chunk[col].fillna(fill_values.get(col, ""))
 
-        # Convertir columnas numéricas que quedaron como string
+        # 3. Convertir columnas numéricas que quedaron como string
         for col, dtype in type_dict.items():
             if dtype in NUMERIC_TYPES and col in chunk.columns:
-                chunk[col] = pd.to_numeric(chunk[col], errors="coerce").fillna(fill_values[col])
+                chunk[col] = pd.to_numeric(chunk[col], errors="coerce").fillna(fill_values.get(col, 0))
 
-        # Label encoding-> reemplazar strings por su código entero
+        # 4. Label encoding
         for col, mapping in encodings.items():
             if col in chunk.columns:
                 chunk[col] = chunk[col].astype(str).map(mapping)
 
+        # 5. Guardar el chunk normal (sin list_json) en el clean.csv
         chunk.to_csv(output_csv, mode="w" if first_chunk else "a", header=first_chunk, index=False)
         first_chunk = False
         total_rows_written += len(chunk)
         log.info("  transform batch %d — %d filas escritas", i + 1, total_rows_written)
+
+    # Cerrar archivos JSON de manera limpia
+    for col, f in json_file_handles.items():
+        f.write("\n]\n")
+        f.close()
+        log.info("Archivo JSON guardado: %s.json", col)
 
     log.info("clean.csv guardado: %d filas", total_rows_written)
 
