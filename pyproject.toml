@@ -12,6 +12,8 @@ dependencies = [
     "seaborn>=0.13.0",
     "kafka-python>=2.0.0",
     "folium>=0.17.0",
+    "confluent-kafka>=2.14.0",
+    "orjson>=3.11.8",
 ]
 
 [tool.uv]
