@@ -9,7 +9,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import IncrementalPCA
 
 # Rutas
-INPUT_CSV = Path(__file__).parent.parent/"data"/"eda"/"clean_no_outliers.csv"
+INPUT_CSV = Path(__file__).parent.parent/"data"/"processed"/"clean.csv"
 TYPE_DICT = Path(__file__).parent.parent/"data"/"processed"/"type_dict.json"
 ENCODINGS = Path(__file__).parent.parent/"data"/"processed"/"encodings.json"
 OUTPUT_DIR = Path(__file__).parent.parent/"data"/"processed"

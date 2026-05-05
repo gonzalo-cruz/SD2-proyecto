@@ -1,0 +1,29 @@
+services:
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: local-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      # Cluster Configuration (KRaft)
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      # IMPORTANTE: Usa 127.0.0.1 o el nombre del servicio para comunicación interna
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@127.0.0.1:9093'
+      
+      # Listeners
+      # Definimos explícitamente el tráfico que viene de fuera (9092) y el interno
+      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://localhost:9092'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT'
+      
+      # Required for KRaft
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      
+      # KRaft Cluster ID
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
