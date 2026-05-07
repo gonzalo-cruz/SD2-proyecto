@@ -1,0 +1,50 @@
+restaurant_name,country_name,cuisines
+C la p'Oz,France,"European, Italian, French, Fusion"
+La Table des Lys,France,"French, European, International"
+Le Savoy,France,"French, European"
+Les Curieux Gourmands,France,French
+La Maison Du Chef,France,"French, Gastropub, European"
+Le P'tit Gourmet,France,"French, European"
+Auberge Sainte Catherine,France,"French, European"
+La Table de Sorgues,France,"French, Mediterranean, European"
+Ar'Bilig,France,"French, European"
+Restaurant Le Tandoor,France,Indian
+Les 3 Chemins,France,"French, European"
+Le Cocon,France,"French, European, Gastropub"
+Sushi San Tarnos,France,"Japanese, Sushi, Asian"
+Vapiano Disney Village,France,"French, Italian"
+Inventions,France,"French, European, International"
+Sare & Thé,France,"Healthy, French"
+Les Petits Fourneaux,France,French
+Restaurant Du Lac,France,French
+La Pergola,France,"French, European"
+Le Séquoia,France,"French, European"
+Café du Nord,France,"Wine Bar, French, European"
+Chez Voisin Lin,France,"Chinese, Asian"
+Le Café 1500,France,"French, Cafe, European"
+A Côté,France,"French, Healthy"
+Le Garage,France,French
+Carnet de Voyage,France,"French, Fusion"
+Tete a the,France,"Cafe, European, International"
+Dan B.,France,"French, Mediterranean, European, Contemporary"
+Le Canoa,France,"French, European"
+Creperie du Moulin,France,French
+Le Petit Jardin,France,"French, Mediterranean, European"
+La Grange aux Oies,France,"French, European"
+Auberge Saint Roch,France,"Italian, Mediterranean, French"
+Auberge de Montfleury,France,"French, European"
+Le Lucullus,France,"French, European"
+Le Nid,France,"Contemporary, French"
+Le Jardin de Berne,France,"French, Mediterranean, European"
+Chateau De Vault De Lugny,France,"French, European"
+"La Maison des bois, Marc Veyrat",France,"French, European"
+La Régal’ette,France,French
+Ginko Biloba,France,French
+Au Pré d'Ici,France,French
+L'Auberge du Castellas,France,"French, Mediterranean"
+Rajpoute,France,"Indian, Pakistani"
+Le Petit Galet,France,"French, European"
+La Houbl'ane,France,French
+Les Jardins Sauvages,France,French
+Boutik Traiteur La Table d'A.S,France,"French, European, Deli"
+Le Quarante Neuf,France,French

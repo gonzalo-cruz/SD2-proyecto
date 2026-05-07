@@ -4,7 +4,6 @@ chunk_size = 50_000
 [kafka]
 bootstrap_servers = "localhost:9092"
 topic = "restaurants"
-batch_size = 500
 
 [clean]
 null_threshold = 0.70 # columns with more than this fraction of nulls are dropped
