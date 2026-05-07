@@ -1,21 +1,21 @@
 city_name,count
-Paris,418814
+Paris,556818
+Madrid,24268
 Rome,12603
-Madrid,12134
+Vienna,9142
+Amsterdam,8704
 Milan,8382
+Munich,7016
 Prague,6035
+Lyon,5860
 Lisbon,5261
-Vienna,4571
-Amsterdam,4352
+Marseille,4832
+Cologne,4802
+Palma de Mallorca,4690
+Frankfurt,4650
+Nice,3802
+Toulouse,3738
+Liverpool,3738
+Bordeaux,3602
 Budapest,3557
-Munich,3508
-Stockholm,3292
-Lyon,2930
-Athens,2915
-Dublin,2749
-Copenhagen,2445
-Marseille,2416
-Cologne,2401
-Manchester,2376
-Birmingham,2371
-Palma de Mallorca,2345
+Dusseldorf,3366

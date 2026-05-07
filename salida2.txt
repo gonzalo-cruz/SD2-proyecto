@@ -1,15 +1,15 @@
 country_name,count
+France,310576
+Germany,230666
 Italy,224763
 Spain,157479
-France,155288
 England,144681
-Germany,115333
+The Netherlands,59584
+Austria,36677
 Greece,33763
 Portugal,32592
-The Netherlands,29792
 Poland,24698
 Belgium,23711
-Austria,20487
 Sweden,18555
 Czech Republic,14844
 Scotland,14215

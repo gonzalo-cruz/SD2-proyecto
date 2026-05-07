@@ -11,7 +11,7 @@ from confluent_kafka import Producer
 BASE_DIR = Path(__file__).parent.parent
 CONFIG_PATH = BASE_DIR / "config.toml"
 INPUT_CSV = BASE_DIR / "data" / "processed" / "preprocessed.csv"
-TYPE_DICT_PATH = BASE_DIR / "data" / "processed" / "type_dict.json"
+TYPE_DICT_PATH = BASE_DIR / "data" / "processed" / "type_dict_encoding.json"
 
 # Carga de configuración
 try:
@@ -44,7 +44,7 @@ def load():
     with open(TYPE_DICT_PATH, "rb") as f:
         full_types = orjson.loads(f.read())
     
-    filtered_schema = {k: v for k, v in full_types.items() if "_json" not in v}
+    filtered_schema = {k: v for k, v in full_types.items() if v != "list_json"}
 
     # Enviar esquema al topic de metadatos
     log.info("Enviando esquema a Kafka...")

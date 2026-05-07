@@ -63,7 +63,7 @@ proyecto/
 - Python 3.11+
 - [uv](https://github.com/astral-sh/uv) — gestiona las dependencias (incluye Airflow)
 - Docker (para Kafka)
-- Java 21 (para Spark Structured Streaming)
+- Java 21 en `/usr/lib/jvm/java-21-openjdk-amd64` — ruta fijada en `queries.py` y `struct_kafka_consumer_local.py`; si la instalación es diferente, ajustar la variable `JAVA_HOME` en esos ficheros
 
 ## Cómo ejecutar
 
@@ -103,9 +103,8 @@ uv run python -m tasks.extract
 uv run python -m tasks.clean
 uv run python -m tasks.eda
 uv run python -m tasks.preprocessing
+uv run python -m tasks.producer   # requiere Kafka corriendo (ver paso 6)
 ```
-
-> **Nota**: la task `load` requiere un broker de Kafka corriendo
 
 ### 6. Levantar Kafka (necesario para la task `load`)
 
@@ -125,6 +124,34 @@ Para pararlo:
 
 ```bash
 docker compose stop
+```
+
+### Reproducción completa desde cero
+
+Secuencia completa para reproducir el proyecto partiendo de un clone limpio:
+
+```bash
+# 1. Instalar dependencias
+uv sync
+
+# 2. Ejecutar el pipeline (genera preprocessed.csv y type_dict_encoding.json)
+uv run python -m tasks.extract
+uv run python -m tasks.clean
+uv run python -m tasks.eda
+uv run python -m tasks.preprocessing
+
+# 3. Levantar Kafka y cargar los datos (~1,08M registros)
+docker compose up -d
+uv run python -m tasks.producer
+
+# 4. Crear el entorno PySpark
+uv venv pyspark-411 --python 3.11
+source pyspark-411/bin/activate
+uv add "pyspark[connect]==4.1.1" orjson
+
+# 5. Ejecutar Structured Streaming
+python struct_kafka_consumer_local.py   # tabla unbounded → salida_stream.txt
+python queries.py                       # 6 consultas analíticas → salida1.txt … salida6.txt
 ```
 
 ---
@@ -172,9 +199,9 @@ Lanza `tasks/producer.py` como subproceso vía `BashOperator` de Airflow. El pro
 
 ## Spark Structured Streaming
 
-`struct_kafka_consumer_local.py` demuestra el consumo básico del topic `restaurants` usando un sink en memoria para consultas SQL interactivas.
+`struct_kafka_consumer_local.py` demuestra el consumo básico del topic `restaurants` como tabla unbounded: lee el esquema desde el topic `restaurants_schema`, parsea cada mensaje con `from_json` y escribe los batches en `salida_stream.txt`.
 
-`queries.py` implementa cuatro consultas analíticas sobre el mismo stream, volcando cada resultado a un fichero de texto. Los valores label-encoded (`restaurant_name`, `country`, `city`) se decodifican en tiempo real mediante un join broadcast con los diccionarios de `encodings.json`.
+`queries.py` implementa seis consultas analíticas sobre el mismo stream, volcando cada resultado a un fichero de texto. Los valores label-encoded (`restaurant_name`, `country`, `city`) se decodifican en tiempo real mediante un join broadcast con los diccionarios de `encodings.json`.
 
 | Query | Modo | Descripción |
 |---|---|---|
@@ -182,8 +209,10 @@ Lanza `tasks/producer.py` como subproceso vía `BashOperator` de Airflow. El pro
 | 2 | `complete` | Conteo de restaurantes por país |
 | 3 | `complete` | Ranking de cocinas más frecuentes |
 | 4 | `append` | Restaurantes con valoración 3.5 estrellas |
+| 5 | `complete` | Top 20 ciudades con más restaurantes |
+| 6 | `append` | Restaurantes con opciones vegetariana, vegana y sin gluten |
 
-Los resultados se guardan en `salida1.txt` … `salida4.txt`.
+Los resultados se guardan en `salida1.txt` … `salida6.txt`.
 
 ### Requisitos adicionales
 
@@ -192,17 +221,17 @@ Crear un entorno virtual con PySpark 4.1.1 (requiere Python 3.11+):
 ```bash
 uv venv pyspark-411 --python 3.11
 source pyspark-411/bin/activate
-uv pip install "pyspark[connect]==4.1.1"
+uv add "pyspark[connect]==4.1.1" orjson
 ```
 
 ### Ejecutar
 
-Asegúrate de que Kafka tiene datos cargados (`uv run python tasks/producer.py`) y activa el entorno `pyspark-411`:
+Asegúrate de que Kafka tiene datos cargados (`uv run python -m tasks.producer`) y activa el entorno `pyspark-411`:
 
 ```bash
 source pyspark-411/bin/activate
-python struct_kafka_consumer_local.py   
-python queries.py                      
+python struct_kafka_consumer_local.py   # tabla unbounded → salida_stream.txt
+python queries.py                       # consultas analíticas → salida1.txt … salida6.txt
 ```
 
 ---

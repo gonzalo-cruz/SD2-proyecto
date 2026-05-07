@@ -161,7 +161,22 @@ def preprocessing():
     with open(OUTPUT_DIR / "ohe_mappings.json", "w", encoding="utf-8") as f:
         json.dump(ohe_mappings, f, indent=2, ensure_ascii=False)
 
-    log.info("Transformadores guardados: scaler.pkl, pca.pkl, ohe_mappings.json")
+    # Guardar type_dict_encoding.json con los tipos post-preprocessing (nombres de columna reales)
+    encoding_type_dict = {}
+    for c in numeric_cols:
+        encoding_type_dict[c] = "numeric"
+    for c in ohe_cols:
+        for category in sorted(encodings.get(c, {}).keys()):
+            encoding_type_dict[f"{c}__{category}"] = "ohe"
+    for c in label_cols:
+        encoding_type_dict[c] = "label_encoded"
+    for c in passthrough:
+        if c in available_cols:
+            encoding_type_dict[c] = "list_json"
+    with open(OUTPUT_DIR / "type_dict_encoding.json", "w", encoding="utf-8") as f:
+        json.dump(encoding_type_dict, f, indent=2, ensure_ascii=False)
+
+    log.info("Transformadores guardados: scaler.pkl, pca.pkl, ohe_mappings.json, type_dict_encoding.json")
 
 
 if __name__ == "__main__":
