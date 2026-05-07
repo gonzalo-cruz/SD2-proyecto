@@ -8,10 +8,10 @@ from pyspark.sql.functions import broadcast, desc, get_json_object
 
 os.environ['JAVA_HOME'] = "/usr/lib/jvm/java-21-openjdk-amd64"
 
-KAFKA_BROKER    = "localhost:9092"
-KAFKA_TOPIC     = "restaurants"
-ENCODINGS_PATH  = "data/processed/encodings.json"
-MAX_OFFSETS_APPEND   = 10_000
+KAFKA_BROKER = "localhost:9092"
+KAFKA_TOPIC = "restaurants"
+ENCODINGS_PATH = "data/processed/encodings.json"
+MAX_OFFSETS_APPEND = 10_000
 MAX_OFFSETS_COMPLETE = 200_000
 
 conf = SparkConf()
@@ -60,9 +60,9 @@ if __name__ == "__main__":
         ["city_name", "city_code"],
     )
 
-    # Consulta 1 — outputMode "append"                                    #
-    # Extrae campos clave del JSON de cada registro según llega,          #
-    # decodificando los valores label-encoded con encodings.json.         #
+    # Consulta 1 -> outputMode "append"                                    
+    # Extrae campos clave del JSON de cada registro según llega,          
+    # decodificando los valores label-encoded con encodings.json.         
     s1 = make_stream(spark, MAX_OFFSETS_APPEND)
     parsed = (s1
               .select(
@@ -83,7 +83,7 @@ if __name__ == "__main__":
     sleep(12)
     q1.stop()
 
-    # Consulta 2 — outputMode "complete"                                  
+    # Consulta 2 -> outputMode "complete"                                  
     # Conteo de restaurantes por país sobre el dataset completo.          
     # MAX_OFFSETS_COMPLETE + sleep=70s cubre los ~1M registros del topic. 
     s2 = make_stream(spark, MAX_OFFSETS_COMPLETE)
@@ -101,7 +101,7 @@ if __name__ == "__main__":
     sleep(70)
     q2.stop()
 
-    # Consulta 3 — outputMode "complete"                                  
+    # Consulta 3 -> outputMode "complete"                                  
     # Ranking de cocinas más frecuentes en el dataset completo.           
     s3 = make_stream(spark, MAX_OFFSETS_COMPLETE)
     by_cuisine = (s3
@@ -117,7 +117,7 @@ if __name__ == "__main__":
     sleep(70)
     q3.stop()
 
-    # Consulta 4 — outputMode "append"                                    
+    # Consulta 4 -> outputMode "append"                                    
     # Restaurantes con valoración 3.5 estrellas (máximo presente tras     
     # el preprocesado). avg_rating__3.5 vale 1 si el restaurante tiene    
     # esa puntuación (OHE).                                               
@@ -139,7 +139,7 @@ if __name__ == "__main__":
     sleep(12)
     q4.stop()
 
-    # Consulta 5 — outputMode "complete"                                  
+    # Consulta 5 -> outputMode "complete"                                  
     # Top 20 ciudades con más restaurantes en el dataset completo.        
     s5 = make_stream(spark, MAX_OFFSETS_COMPLETE)
     by_city = (s5
@@ -157,7 +157,7 @@ if __name__ == "__main__":
     sleep(70)
     q5.stop()
 
-    # Consulta 6 — outputMode "append"                                    
+    # Consulta 6 -> outputMode "append"                                    
     # Restaurantes con las tres opciones dietéticas disponibles:          
     # vegetariano, vegano y sin gluten (columnas OHE = 1).                
     s6 = make_stream(spark, MAX_OFFSETS_APPEND)
