@@ -1,269 +1,104 @@
-# TripAdvisor Restaurants Pipeline
+# **TripAdvisor Restaurants Pipeline**
 
-Pipeline de datos con Apache Airflow para procesar el dataset de restaurantes europeos de TripAdvisor (~1M filas, 42 columnas).
+Sistema integral de procesamiento de datos para el dataset de restaurantes europeos de TripAdvisor (\~1M filas, 42 columnas). El proyecto se divide en un pipeline ETL batch orquestado por Airflow y una fase de procesamiento de eventos en tiempo real con Kafka y Spark Streaming.
 
----
+## **Estructura del Proyecto (ETL \+ Streaming)**
 
-## Estructura
+proyecto/  
+├── dags/  
+│   └── pipeline.py                  \# Definición del DAG de Airflow  
+├── tasks/  
+│   ├── extract.py                   \# Descarga/Lectura de datos raw  
+│   ├── clean.py                     \# Limpieza y tipado inicial  
+│   ├── eda.py                       \# Análisis exploratorio y generación de gráficas  
+│   ├── preprocessing.py             \# Feature engineering (OHE, Escalado, PCA)  
+│   ├── load.py                      \# Orquestador del productor (BashOperator)  
+│   └── producer.py                  \# Productor Kafka (confluent\_kafka \+ orjson)  
+├── data/  
+│   ├── raw/  
+│   │   └── raw.csv                  \# Dataset original  
+│   └── processed/  
+│       ├── clean.csv                \# Datos limpios  
+│       ├── type\_dict\_encoding.json  \# Esquema técnico para Spark  
+│       ├── encodings.json           \# Diccionarios de decodificación  
+│       ├── preprocessed.csv         \# Dataset final con OHE y transformaciones  
+│       └── ...                      \# Metadatos y modelos (.json, .pkl)  
+├── docker-compose.yml               \# Infraestructura de Kafka (KRaft)  
+├── pyproject.toml                   \# Gestión de dependencias con uv  
+├── config.toml                      \# Configuración centralizada del pipeline  
+├── salida\_stream.txt                \# Log del consumidor principal  
+└── salida\[1-6\].txt                  \# Resultados de las consultas analíticas
 
-```
-proyecto/
-├── dags/
-│   └── pipeline.py                  # Definición del DAG de Airflow
-├── tasks/
-│   ├── extract.py
-│   ├── clean.py
-│   ├── eda.py
-│   ├── preprocessing.py
-│   ├── load.py                      # BashOperator que lanza producer.py
-│   └── producer.py                  # Productor Kafka (confluent_kafka + orjson)
-├── data/
-│   ├── raw/
-│   │   └── raw.csv                  # Salida de extract
-│   └── processed/
-│       ├── clean.csv                # Salida de clean
-│       ├── type_dict.json
-│       ├── encodings.json
-│       ├── processing_hints.json
-│       ├── cuisines.json            # Columnas de listas extraídas
-│       ├── meals.json
-│       ├── top_tags.json
-│       ├── original_location.json
-│       ├── original_open_hours.json
-│       ├── summary_stats.json       # Salida de eda
-│       ├── numeric_stats.json
-│       ├── preprocessed.csv         # Salida de preprocessing
-│       ├── pca.csv
-│       ├── scaler.pkl
-│       ├── pca.pkl
-│       ├── ohe_mappings.json
-│       └── pca_explained_variance.json
-├── eda/
-│   ├── numeric/                     # Histogramas + boxplots
-│   ├── categorical/                 # Gráficos de barras
-│   ├── boolean/
-│   ├── list_json/                   # Heatmaps de co-ocurrencia
-│   └── scatters/                    # Matriz de dispersión
-├── kafka-producer-confluent.py      # Demo productor Kafka (topic purchases)
-├── kafka-consumer-confluent.py      # Demo consumidor Kafka (topic purchases)
-├── struct_kafka_consumer_local.py   # Consumidor Spark Structured Streaming (demo)
-├── queries.py                       # Consultas Spark Structured Streaming sobre restaurants
-├── docker-compose.yml               # Kafka (Confluent 7.6, KRaft) vía Docker Compose
-├── config.toml                      # Parámetros configurables del pipeline
-├── informe.md
-├── grafo_pipeline.png
-├── pyproject.toml
-└── tripadvisor_european_restaurants.csv
-```
+## **Requisitos**
 
----
+* Python 3.11+  
+* [uv](https://github.com/astral-sh/uv) — gestiona las dependencias (incluye Airflow)  
+* Docker (para Kafka)  
+* Java 21 en /usr/lib/jvm/java-21-openjdk-amd64 — ruta fijada en queries.py y struct\_kafka\_consumer\_local.py; si la instalación es diferente, ajustar la variable JAVA\_HOME en esos ficheros
 
-## Requisitos
+# **Parte 1: Pipeline ETL (Batch)**
 
-- Python 3.11+
-- [uv](https://github.com/astral-sh/uv) — gestiona las dependencias (incluye Airflow)
-- Docker (para Kafka)
-- Java 21 en `/usr/lib/jvm/java-21-openjdk-amd64` — ruta fijada en `queries.py` y `struct_kafka_consumer_local.py`; si la instalación es diferente, ajustar la variable `JAVA_HOME` en esos ficheros
+Esta fase procesa el dataset desde su estado bruto hasta un formato listo para el análisis o entrenamiento de modelos.
 
-## Cómo ejecutar
+## **Ejecución Manual del ETL**
 
-### 1. Descargar el dataset
+Aunque el flujo está diseñado para Airflow, los scripts pueden ejecutarse secuencialmente mediante uv:
 
-Descarga el dataset desde [Kaggle](https://www.kaggle.com/datasets/stefanoleone992/tripadvisor-european-restaurants/data) y coloca el fichero `tripadvisor_european_restaurants.csv` en la raíz del proyecto. La task `extract` lo cogerá de ahí y generará `data/raw/raw.csv` automáticamente.
+1. **Extracción:** uv run tasks/extract.py  
+2. **Limpieza:** uv run tasks/clean.py  
+3. **Análisis (EDA):** uv run tasks/eda.py  
+4. **Preprocesamiento:** uv run tasks/preprocessing.py  
+5. **Carga (Productor):** uv run tasks/load.py (Inicia el envío a Kafka)
 
-### 2. Instalar dependencias
+## **Orquestación con Airflow**
 
-```bash
-cd sd2/proyecto
-uv sync
-```
+El pipeline se gestiona automáticamente mediante el DAG definido en dags/pipeline.py. A continuación se detallan los pasos necesarios para configurar el entorno e iniciar la orquestación:
 
-### 3. Levantar Airflow
+### **1\. Descargar el dataset**
 
-```bash
-AIRFLOW_HOME=$(pwd) uv run airflow standalone
-```
+Descarga el dataset desde [Kaggle](https://www.kaggle.com/datasets/stefanoleone992/tripadvisor-european-restaurants/data) y coloca el fichero tripadvisor\_european\_restaurants.csv en la raíz del proyecto. La task extract lo cogerá de ahí y generará data/raw/raw.csv automáticamente.
 
-La UI queda en **http://localhost:8080**. Las credenciales se generan en `simple_auth_manager_passwords.json.generated`.
+### **2\. Instalar dependencias**
 
-### 4. Lanzar el pipeline
-
-Desde la UI: activar el toggle del DAG `tripadvisor_pipeline` → **Trigger DAG**.
-
-O desde terminal:
-
-```bash
-AIRFLOW_HOME=$(pwd) uv run airflow dags trigger tripadvisor_pipeline
-```
-
-### 5. Ejecutar una task individualmente (si se quiere probar)
-
-```bash
-uv run python -m tasks.extract
-uv run python -m tasks.clean
-uv run python -m tasks.eda
-uv run python -m tasks.preprocessing
-uv run python -m tasks.producer   # requiere Kafka corriendo (ver paso 6)
-```
-
-### 6. Levantar Kafka (necesario para la task `load`)
-
-```bash
-docker compose up -d
-```
-
-> Si el contenedor ya existe de una sesión anterior, usa `docker compose start` en lugar de `docker compose up -d`.
-
-Para comprobar que está corriendo:
-
-```bash
-docker compose ps
-```
-
-Para pararlo:
-
-```bash
-docker compose stop
-```
-
-### Reproducción completa desde cero
-
-Secuencia completa para reproducir el proyecto partiendo de un clone limpio:
-
-```bash
-# 1. Instalar dependencias
+cd sd2/proyecto  
 uv sync
 
-# 2. Ejecutar el pipeline (genera preprocessed.csv y type_dict_encoding.json)
-uv run python -m tasks.extract
-uv run python -m tasks.clean
-uv run python -m tasks.eda
-uv run python -m tasks.preprocessing
+### **3\. Levantar Airflow**
 
-# 3. Levantar Kafka y cargar los datos (~1,08M registros)
-docker compose up -d
-uv run python -m tasks.producer
+export AIRFLOW\_HOME=$(pwd)  
+uv run airflow standalone
 
-# 4. Crear el entorno PySpark
-uv venv pyspark-411 --python 3.11
-source pyspark-411/bin/activate
-uv add "pyspark[connect]==4.1.1" orjson
+**Nota:** Es fundamental mantener las rutas relativas de las tasks para que el DAG pueda importar y ejecutar los scripts de la carpeta tasks/ correctamente una vez se inicie el scheduler.
 
-# 5. Ejecutar Structured Streaming
-python struct_kafka_consumer_local.py   # tabla unbounded → salida_stream.txt
-python queries.py                       # 6 consultas analíticas → salida1.txt … salida6.txt
-```
+# **Parte 2: Introducción al Streaming (Spark & Kafka)**
 
----
+Esta sección se enfoca en la ingesta y el procesamiento de flujos de datos en tiempo real una vez que el ETL ha generado los metadatos necesarios.
 
-## Pipeline
+## **Ficheros Relevantes**
 
-```
-extract → clean → eda → preprocessing → load
-```
+* struct\_kafka\_consumer\_local.py (Consumidor principal / Unbounded Table)  
+* queries.py (Validación de consultas de negocio)  
+* producer.py (Ingesta desde CSV preprocesado a Kafka)  
+* type\_dict\_encoding.json y encodings.json (Contratos de datos)
 
-### extract
-Lee el CSV fuente en chunks de 50.000 filas y lo guarda en `data/raw/raw.csv`.
+## **Instrucciones de Ejecución**
 
-### clean
-- Elimina columnas con más del 70% de valores nulos
-- Detecta el tipo de cada columna (numérica, booleana, lista, categórica)
-- Imputa valores faltantes (mediana para numéricas, moda para el resto)
-- Label encoding para columnas categóricas y booleanas
-- Guarda `clean.csv`, `type_dict.json`, `encodings.json` en `data/processed/`
+Siga estrictamente este orden para asegurar la conectividad:
 
-### eda
-- Genera gráficos de distribución (histograma con curva KDE y boxplot) para cada variable numérica.
-- Calcula valores atípicos mediante rango intercuartílico (IQR) y la matriz de correlación de Pearson.
-- Crea gráficos de barras legibles para frecuencias de variables categóricas y booleanas, revirtiendo temporalmente el encoding.
-- Construye mapas de calor de co-ocurrencia (heatmaps) para los elementos más comunes dentro de las listas JSON.
-- Dibuja una matriz de dispersión multivariable utilizando una muestra representativa para evitar el agotamiento de memoria.
-- Guarda las imágenes organizadas por tipo de dato en la carpeta `eda/` y exporta la metadata `numeric_stats.json` en `data/processed/`.
+1. **Sincronizar el Entorno:**  
+   uv sync
 
-### preprocessing
-- Normalización con `StandardScaler`
-- One-Hot Encoding para columnas categóricas de baja cardinalidad (≤ 15 valores únicos)
-- PCA incremental sobre columnas numéricas
-- Todo se procesa en batches para no cargar el dataset entero en memoria
-- Guarda `preprocessed.csv`, `pca.csv`, `scaler.pkl`, `pca.pkl` en `data/processed/`
+2. **Levantar Infraestructura:**  
+   docker compose up \-d
 
-### load
-Lanza `tasks/producer.py` como subproceso vía `BashOperator` de Airflow. El productor:
-- Envía primero el esquema de columnas al topic `restaurants_schema`
-- Serializa cada fila de `preprocessed.csv` con `orjson` (más rápido que `json` estándar)
-- Usa `confluent_kafka` con confirmación (`acks=all`)
-- Maneja backpressure con reintentos automáticos ante `BufferError`
-- Delivery callback asíncrono para contabilizar enviados y errores
+3. **Iniciar Productor:**  
+   uv run tasks/producer.py
 
----
+4. **Ejecutar Consumidores (a elegir):**  
+   * **Tabla Dinámica:** uv run struct\_kafka\_consumer\_local.py  
+   * **Consultas Analíticas:** uv run queries.py
 
-## Spark Structured Streaming
+## **Notas Finales**
 
-`struct_kafka_consumer_local.py` demuestra el consumo básico del topic `restaurants` como tabla unbounded: lee el esquema desde el topic `restaurants_schema`, parsea cada mensaje con `from_json` y escribe los batches en `salida_stream.txt`.
-
-`queries.py` implementa seis consultas analíticas sobre el mismo stream, volcando cada resultado a un fichero de texto. Los valores label-encoded (`restaurant_name`, `country`, `city`) se decodifican en tiempo real mediante un join broadcast con los diccionarios de `encodings.json`.
-
-| Query | Modo | Descripción |
-|---|---|---|
-| 1 | `append` | Campos clave de cada mensaje: nombre, país, ciudad y cocina |
-| 2 | `complete` | Conteo de restaurantes por país |
-| 3 | `complete` | Ranking de cocinas más frecuentes |
-| 4 | `append` | Restaurantes con valoración 3.5 estrellas |
-| 5 | `complete` | Top 20 ciudades con más restaurantes |
-| 6 | `append` | Restaurantes con opciones vegetariana, vegana y sin gluten |
-
-Los resultados se guardan en `salida1.txt` … `salida6.txt`.
-
-### Requisitos adicionales
-
-Crear un entorno virtual con PySpark 4.1.1 (requiere Python 3.11+):
-
-```bash
-uv venv pyspark-411 --python 3.11
-source pyspark-411/bin/activate
-uv add "pyspark[connect]==4.1.1" orjson
-```
-
-### Ejecutar
-
-Asegúrate de que Kafka tiene datos cargados (`uv run python -m tasks.producer`) y activa el entorno `pyspark-411`:
-
-```bash
-source pyspark-411/bin/activate
-python struct_kafka_consumer_local.py   # tabla unbounded → salida_stream.txt
-python queries.py                       # consultas analíticas → salida1.txt … salida6.txt
-```
-
----
-
-## Configuración
-
-El archivo `config.toml` centraliza todos los parámetros del pipeline:
-
-| Sección | Clave | Descripción |
-|---|---|---|
-| `[general]` | `chunk_size` | Filas leídas por batch en todos los tasks |
-| `[clean]` | `null_threshold` | Fracción de nulos para eliminar una columna |
-| `[clean]` | `numeric_categorical_threshold` | Valores únicos máximos para clasificar como `numeric_categorical` |
-| `[eda]` | `top_n_categories` | Categorías mostradas en gráficos de barras |
-| `[eda]` | `top_n_cooccurrence` | Elementos en heatmaps de co-ocurrencia |
-| `[eda]` | `scatter_sample_rows` | Filas muestreadas para la matriz de dispersión |
-| `[eda]` | `plot_dpi` | Resolución de las imágenes generadas |
-| `[preprocessing]` | `ohe_max_cardinality` | Cardinalidad máxima para OHE (por encima → label encoding) |
-| `[kafka]` | `bootstrap_servers`, `topic` | Conexión y topic del productor Kafka |
-
----
-
-## Dataset
-
-`tripadvisor_european_restaurants.csv` — ~1.083.000 filas, 42 columnas.
-
-Columnas eliminadas en la limpieza por tener demasiados nulos:
-
-| Columna | % nulos |
-|---------|---------|
-| keywords | 90.8% |
-| atmosphere | 75.8% |
-| awards | 75.7% |
-| price_range | 71.9% |
-| features | 70.7% |
+* **Entorno:** uv sync garantiza que se utilice **PySpark 4.1.1** y las versiones exactas de las librerías de Kafka.  
+* **Limpieza:** Use docker compose down \-v para resetear el broker y eliminar los tópicos creados.
