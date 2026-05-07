@@ -201,8 +201,8 @@ Asegúrate de que Kafka tiene datos cargados (`uv run python tasks/producer.py`)
 
 ```bash
 source pyspark-411/bin/activate
-python struct_kafka_consumer_local.py   # demo memoria
-python queries.py                       # consultas analíticas → salida[1-4].txt
+python struct_kafka_consumer_local.py   
+python queries.py                      
 ```
 
 ---
