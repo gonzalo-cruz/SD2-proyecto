@@ -14,6 +14,7 @@ dependencies = [
     "folium>=0.17.0",
     "confluent-kafka>=2.14.0",
     "orjson>=3.11.8",
+    "pyspark>=4.1.1",
 ]
 
 [tool.uv]
