@@ -13,6 +13,10 @@ simple_auth_manager_passwords.json.generated
 data/
 eda/
 
+# ML artifacts (generados por train_model.py)
+models/
+pyspark-411/
+
 # Python
 __pycache__/
 *.pyc

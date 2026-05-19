@@ -15,6 +15,8 @@ dependencies = [
     "confluent-kafka>=2.14.0",
     "orjson>=3.11.8",
     "pyspark>=4.1.1",
+    "polars>=1.40.1",
+    "streamlit>=1.57.0",
 ]
 
 [tool.uv]
