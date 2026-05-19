@@ -57,8 +57,11 @@ def load():
 
     # Enviar datos del CSV
     log.info(f"Iniciando envío de datos desde {INPUT_CSV}")
+    row_id = 0
     for chunk in pd.read_csv(INPUT_CSV, chunksize=10000, low_memory=False):
         for record in chunk.to_dict(orient="records"):
+            record["row_id"] = row_id
+            row_id += 1
             # Serialización ultra rápida con orjson
             value_bytes = orjson.dumps(record)
             
