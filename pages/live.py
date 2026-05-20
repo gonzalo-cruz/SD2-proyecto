@@ -1,6 +1,9 @@
 # Tab "En vivo": muestra los restaurantes que van llegando desde Kafka
 # y han sido clasificados por Spark Structured Streaming (streaming_score.py).
-# La tabla y las recomendaciones se actualizan automáticamente cada 5 segundos.
+# Arquitectura de dos fragments:
+#   _counter: auto-refresca cada 5s solo los números (ligero, sin parpadeo)
+#   _table:   sin auto-refresh; solo se refresca al hacer clic en una fila o
+#             pulsar "Actualizar" — elimina la cascada on_select + run_every
 import pandas as pd
 import polars as pl
 import streamlit as st
@@ -18,13 +21,12 @@ def render_live(df, decode, encode, cuisine_idx, top_cuisines, country_cities):
         '<div class="rf-desc">'
         'Restaurantes llegando desde Kafka, clasificados por KMeans en tiempo real. '
         'Las recomendaciones y los filtros se aplican únicamente sobre los restaurantes '
-        'que ya han sido scoreados. Actualización automática cada 5 segundos.'
+        'que ya han sido scoreados.'
         '</div>'
         '</div>',
         unsafe_allow_html=True,
     )
 
-    # Si el fichero de resultados no existe todavía, el stream no ha arrancado
     if not STREAM_CSV.exists():
         st.info(
             "No hay datos aún. Arranca el pipeline en dos terminales:\n\n"
@@ -33,27 +35,43 @@ def render_live(df, decode, encode, cuisine_idx, top_cuisines, country_cities):
         )
         return
 
-    # Los filtros se renderizan FUERA del fragment para que el usuario pueda
-    # interactuar con ellos sin que el auto-refresh los interrumpa.
-    # El fragment lee los valores desde session_state en cada ciclo.
     build_filters(encode, top_cuisines=top_cuisines,
                   country_cities=country_cities, prefix="live_")
     st.markdown('<div class="rf-divider"></div>', unsafe_allow_html=True)
 
+    # Fragment 1: solo el contador numérico — una línea, sin layout complejo.
+    # Lee únicamente el CSV pequeño de resultados → muy rápido, parpadeo mínimo.
     @st.fragment(run_every="5s")
-    def _feed():
-        # Leemos el CSV que va creciendo conforme llegan batches de Spark
+    def _counter():
+        raw = pd.read_csv(STREAM_CSV)
+        n_clust = raw["cluster"].nunique()
+        st.markdown(
+            f'<div class="rf-stats">'
+            f'<div><span class="rf-stat-n">{len(raw):,}</span>'
+            f'<span class="rf-stat-l">scoreados</span></div>'
+            f'<div><span class="rf-stat-n">{n_clust}</span>'
+            f'<span class="rf-stat-l">clusters activos</span></div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    _counter()
+
+    st.markdown('<div style="height:0.4rem"></div>', unsafe_allow_html=True)
+
+    # Fragment 2: tabla interactiva, gráfica y recomendaciones.
+    # Sin run_every → solo se refresca cuando el usuario interactúa (clic en fila
+    # o botón Actualizar), eliminando la cascada on_select + auto-refresh.
+    @st.fragment
+    def _table():
         raw = pd.read_csv(STREAM_CSV)
         if raw.empty:
             st.caption("Esperando el primer batch…")
             return
 
-        # Cruzamos los row_ids que han llegado por stream con el DataFrame
-        # completo para tener todas las columnas (país, ciudad, etc.)
         stream_row_ids = set(raw["row_id"].dropna().astype(int).tolist())
-        stream_df      = df.filter(pl.col("row_id").is_in(stream_row_ids))
+        stream_df = df.filter(pl.col("row_id").is_in(stream_row_ids))
 
-        # Leemos los filtros activos del session_state (seteados por los widgets de arriba)
         filters = dict(
             country    = st.session_state.get("live_country",  "Todos"),
             city       = st.session_state.get("live_city",     []),
@@ -66,21 +84,17 @@ def render_live(df, decode, encode, cuisine_idx, top_cuisines, country_cities):
         )
 
         filtered_stream = apply_filters(stream_df, encode, cuisine_idx, filters)
-        total   = filtered_stream.height
-        n_clust = raw["cluster"].nunique()
+        total = filtered_stream.height
 
-        # Estadísticas del stream actual
-        st.markdown(
-            f'<div class="rf-stats">'
-            f'<div><span class="rf-stat-n">{len(raw):,}</span>'
-            f'<span class="rf-stat-l">scoreados</span></div>'
-            f'<div><span class="rf-stat-n">{total:,}</span>'
-            f'<span class="rf-stat-l">con filtros</span></div>'
-            f'<div><span class="rf-stat-n">{n_clust}</span>'
-            f'<span class="rf-stat-l">clusters</span></div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
+        col_hdr, col_btn = st.columns([4, 1])
+        with col_hdr:
+            st.caption(
+                f"{total:,} restaurantes con los filtros · "
+                f"{len(raw):,} scoreados en total"
+            )
+        with col_btn:
+            if st.button("↺ Actualizar", use_container_width=True):
+                st.rerun(scope="fragment")
 
         col_table, col_chart = st.columns([2, 1], gap="large")
 
@@ -88,20 +102,17 @@ def render_live(df, decode, encode, cuisine_idx, top_cuisines, country_cities):
             if total == 0:
                 st.info("Ningún restaurante scoreado cumple los filtros aún.")
             else:
-                # Enriquecemos el CSV del stream con los datos completos del restaurant
                 filt_ids = filtered_stream["row_id"].to_list()
                 enriched = (
                     df.filter(pl.col("row_id").is_in(filt_ids))
                       .select(["row_id", "country", "city", "avg_rating", "price_level"])
                       .to_pandas()
                 )
-                # Ordenamos por scored_at para ver los más recientes primero
                 newest = (raw[raw["row_id"].isin(filt_ids)]
                             .sort_values("scored_at", ascending=False)
                             .reset_index(drop=True))
                 merged = newest.merge(enriched, on="row_id", how="left")
 
-                # Decodificamos los códigos numéricos a nombres legibles
                 merged["País"]   = [decode["country"].get(int(v), "—") if pd.notna(v) else "—"
                                      for v in merged["country"]]
                 merged["Ciudad"] = [decode["city"].get(int(v), "—") if pd.notna(v) else "—"
@@ -123,8 +134,6 @@ def render_live(df, decode, encode, cuisine_idx, top_cuisines, country_cities):
                     use_container_width=True, hide_index=True, key="live_table",
                 )
 
-                # Guardamos la selección en session_state para que persista
-                # entre ciclos de auto-refresh (el fragment se re-ejecuta cada 5s)
                 sel = event.selection.rows
                 if sel and sel[0] < len(merged):
                     st.session_state["live_rid"]     = int(merged.iloc[sel[0]]["row_id"])
@@ -141,7 +150,6 @@ def render_live(df, decode, encode, cuisine_idx, top_cuisines, country_cities):
             )
             st.bar_chart(cluster_counts.set_index("Cluster")["N"])
 
-        # Recomendaciones basadas en el restaurante seleccionado en el stream
         rid     = st.session_state.get("live_rid")
         cluster = st.session_state.get("live_cluster")
         name    = st.session_state.get("live_name", "")
@@ -157,11 +165,14 @@ def render_live(df, decode, encode, cuisine_idx, top_cuisines, country_cities):
             unsafe_allow_html=True,
         )
 
-        # Las recomendaciones solo se buscan entre los restaurantes ya scoreados
-        recs = get_recommendations(filtered_stream, rid, cluster, filters, encode, cuisine_idx)
+        recs = get_recommendations(stream_df, rid, cluster, filters, encode, cuisine_idx)
         if recs.height == 0:
-            st.info("No hay similares en el stream con los filtros actuales. "
-                    "Espera a que lleguen más restaurantes o ajusta los filtros.")
+            neutral = {"country": "Todos", "city": [], "min_rating": 1.0,
+                       "price": "Todos", "cuisines": [], "veg": False, "vegan": False, "gf": False}
+            recs = get_recommendations(stream_df, rid, cluster, neutral, encode, cuisine_idx)
+        if recs.height == 0:
+            st.info("No hay similares en el stream aún. "
+                    "Espera a que lleguen más restaurantes.")
             return
 
         rec_df      = build_rec_df(recs, decode)
@@ -176,4 +187,4 @@ def render_live(df, decode, encode, cuisine_idx, top_cuisines, country_cities):
             },
         )
 
-    _feed()
+    _table()
