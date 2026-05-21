@@ -29,6 +29,7 @@ export default function LiveTab({ countries, prices }) {
   const [selectedId, setSelectedId]   = useState(null)
   const [selectedName, setSelectedName] = useState('')
   const [stats, setStats]             = useState(null)
+  const [filterTotal, setFilterTotal] = useState(0)
   const [cities, setCities]           = useState([])
   const [cityInput, setCityInput]     = useState('')
   const [filters, setFilters]         = useState({
@@ -78,9 +79,11 @@ export default function LiveTab({ countries, prices }) {
     else if (cities.includes(value)) setFilter('city', value)
   }
 
-  // Stats separado del snapshot: el total real son todos los scoreados, no solo los filtrados
   useEffect(() => {
-    const load = () => fetch('/api/stream/stats').then(r => r.json()).then(setStats)
+    const load = () => {
+      fetch('/api/stream/stats').then(r => r.json()).then(setStats)
+      fetch('/api/filter/stats').then(r => r.json()).then(d => setFilterTotal(d.total))
+    }
     load()
     const id = setInterval(load, 5000)
     return () => clearInterval(id)
@@ -167,7 +170,11 @@ export default function LiveTab({ countries, prices }) {
     <div className="live">
       <div className="live-header">
         <div className="stats">
-          <span className="stat-n">{(stats?.total ?? rows.length).toLocaleString()}</span>
+          <span className="stat-n">{filterTotal.toLocaleString()}</span>
+          <span className="stat-l">procesados</span>
+        </div>
+        <div className="stats">
+          <span className="stat-n">{(stats?.total ?? 0).toLocaleString()}</span>
           <span className="stat-l">scoreados</span>
         </div>
         <span className={`badge ${connected ? 'badge-live' : 'badge-off'}`}>

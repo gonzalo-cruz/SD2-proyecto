@@ -1,12 +1,26 @@
 # Consumidor de Spark Structured Streaming que clasifica los restaurantes
 # que llegan por Kafka en tiempo real usando el modelo KMeans entrenado.
 #
-#   1. Lee el schema del topic 'restaurants_schema' (enviado por producer.py)
-#   2. Consume el topic 'restaurants' en micro-batches de 5 segundos
-#   3. Por cada batch: ensambla el vector de features, aplica KMeans y
-#      calcula la distancia al centroide del cluster asignado
-#   4. Escribe los resultados en data/streaming/results.csv
-#      (la app los lee cada 5s para actualizar el tab "En vivo")
+# MODIFICADO respecto a la versión original:
+#   - Lee de DOS topics en paralelo:
+#       · 'restaurants'          → stream normal (mismo ritmo que antes)
+#       · 'restaurants_priority' → cola de prioridad para restaurantes que el
+#                                  usuario ha seleccionado antes de que el
+#                                  consumidor KMeans haya llegado a ellos
+#   - Mantiene un conjunto 'seen_row_ids' para no clasificar dos veces el mismo
+#     registro: cuando un restaurante llega por la cola de prioridad se clasifica
+#     inmediatamente y su row_id se añade al conjunto; cuando ese mismo registro
+#     llega por el stream normal se descarta.
+#   - El conjunto seen_row_ids se persiste en disco (seen_row_ids.json) para
+#     sobrevivir reinicios del proceso.
+#
+#   Flujo original (sin cambios):
+#   1. Lee el schema del topic 'restaurants_schema'
+#   2. Consume micro-batches de 5 s del topic normal
+#   3. Ensambla features → KMeans → distancia al centroide
+#   4. Escribe resultados en data/streaming/results.csv
+
+import atexit
 import json
 import os
 import numpy as np
@@ -14,7 +28,7 @@ import orjson
 from pathlib import Path
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, from_json
+from pyspark.sql.functions import col, from_json, lit
 from pyspark.sql.types import (
     StructType, StructField,
     FloatType, DoubleType, IntegerType, LongType, StringType,
@@ -29,20 +43,18 @@ ENCODINGS_JSON = BASE_DIR / "data" / "processed" / "encodings.json"
 FEATURE_COLS_JSON = BASE_DIR / "models" / "feature_cols.json"
 KMEANS_MODEL = BASE_DIR / "models" / "kmeans_spark"
 STREAM_OUT = BASE_DIR / "data" / "streaming" / "results.csv"
+SEEN_IDS_PATH = BASE_DIR / "data" / "streaming" / "seen_row_ids.json"
 
 TOPIC = "restaurants"
+PRIORITY_TOPIC = "restaurants_priority"
 BOOTSTRAP = "localhost:9092"
 
 
 def sanitize_col(name: str) -> str:
-    # Los nombres de columna con '.' los renombramos igual que en train_model.py
-    # para que el VectorAssembler encuentre las mismas columnas
     return name.replace(".", "_")
 
 
 def map_spark_types(type_dict: dict) -> StructType:
-    # Convertimos el diccionario de tipos del pipeline al schema de Spark
-    # necesario para parsear los mensajes JSON de Kafka
     mapping = {
         "numeric":       DoubleType(),
         "ohe":           IntegerType(),
@@ -55,16 +67,35 @@ def map_spark_types(type_dict: dict) -> StructType:
     ])
 
 
+def load_seen_ids() -> set:
+    """Carga el conjunto de row_ids ya clasificados desde disco (para sobrevivir reinicios)."""
+    if SEEN_IDS_PATH.exists():
+        try:
+            with open(SEEN_IDS_PATH) as f:
+                return set(json.load(f))
+        except Exception:
+            pass
+    return set()
+
+
+def save_seen_ids(seen: set):
+    """Persiste el conjunto de row_ids en disco."""
+    SEEN_IDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(SEEN_IDS_PATH, "w") as f:
+        json.dump(list(seen), f)
+
+
 def main():
-    # Cargamos los nombres de features que uso el entrenamiento para garantizar
-    # que el VectorAssembler aplique exactamente las mismas columnas
     with open(FEATURE_COLS_JSON) as f:
         feature_cols = json.load(f)
 
-    # Cargamos el encoding de nombres para mostrar el nombre real del restaurante
     with open(ENCODINGS_JSON) as f:
         enc = json.load(f)
     decode_name = {int(v): k for k, v in enc["restaurant_name"].items()}
+
+    # Conjunto de row_ids ya clasificados (en memoria + persistido en disco)
+    seen_row_ids: set = load_seen_ids()
+    atexit.register(save_seen_ids, seen_row_ids)
 
     spark = (SparkSession.builder
              .appName("RestaurantStreamScorer")
@@ -75,9 +106,7 @@ def main():
              .getOrCreate())
     spark.sparkContext.setLogLevel("WARN")
 
-    # Leer el schema del topic de metadatos 
-    # producer.py envia el schema antes de los datos para que el consumidor
-    # sepa como parsear los mensajes JSON
+    # Leer schema del topic de metadatos
     print(f"Leyendo schema del topic '{TOPIC}_schema' ...")
     raw_schema = (spark.read
                   .format("kafka")
@@ -91,97 +120,130 @@ def main():
                   .collect())
 
     if not raw_schema:
-        print("ERROR: no se encontro schema en 'restaurants_schema'. "
+        print("ERROR: no se encontró schema en 'restaurants_schema'. "
               "Ejecuta tasks/producer.py primero.")
         spark.stop()
         return
 
     type_dict = orjson.loads(raw_schema[0][0])
-    type_dict["row_id"] = "label_encoded"   # el producer añade row_id a cada mensaje
+    type_dict["row_id"] = "label_encoded"
     spark_schema = map_spark_types(type_dict)
     print(f"  Schema cargado: {len(type_dict)} columnas")
 
-    # Cargar el modelo KMeans entrenado 
-    model   = KMeansModel.load(str(KMEANS_MODEL))
-    # Leemos los centroides directamente del modelo para asegurar consistencia
+    model = KMeansModel.load(str(KMEANS_MODEL))
     centers = np.array(model.clusterCenters(), dtype=np.float32)
     assembler = VectorAssembler(inputCols=feature_cols, outputCol="features",
                                 handleInvalid="keep")
 
-    # Iniciar la lectura del stream de Kafka 
-    raw_stream = (spark.readStream
-                  .format("kafka")
-                  .option("kafka.bootstrap.servers", BOOTSTRAP)
-                  .option("subscribe", TOPIC)
-                  .option("startingOffsets", "earliest")
-                  .option("maxOffsetsPerTrigger", 500)
-                  .load())
+    def build_stream(topic: str, source_label: str, max_offsets: int):
+        """Construye un readStream de Kafka y añade una columna 'source' para identificar el topic."""
+        raw = (spark.readStream
+               .format("kafka")
+               .option("kafka.bootstrap.servers", BOOTSTRAP)
+               .option("subscribe", topic)
+               .option("startingOffsets", "earliest")
+               .option("maxOffsetsPerTrigger", max_offsets)
+               .load())
 
-    # Parseamos el JSON de cada mensaje usando el schema leido antes
-    parsed = (raw_stream
-              .selectExpr("CAST(value AS STRING) as json_payload",
-                          "timestamp as kafka_ts")
-              .select(from_json(col("json_payload"), spark_schema).alias("d"),
-                      col("kafka_ts"))
-              .select("d.*", "kafka_ts"))
+        parsed = (raw
+                  .selectExpr("CAST(value AS STRING) as json_payload",
+                              "timestamp as kafka_ts")
+                  .select(from_json(col("json_payload"), spark_schema).alias("d"),
+                          col("kafka_ts"))
+                  .select("d.*", "kafka_ts")
+                  .withColumn("_source", lit(source_label)))
 
-    # Renombramos columnas con '.' porque Spark las interpreta como acceso a struct field
-    rename_map = {c: sanitize_col(c) for c in type_dict if "." in c}
-    if rename_map:
-        parsed = parsed.select(
-            [col(f"`{c}`").alias(sanitize_col(c)) if "." in c else col(c)
-             for c in parsed.columns]
-        )
+        rename_map = {c: sanitize_col(c) for c in type_dict if "." in c}
+        if rename_map:
+            parsed = parsed.select(
+                [col(f"`{c}`").alias(sanitize_col(c)) if "." in c else col(c)
+                 for c in parsed.columns]
+            )
+        return parsed
 
-    # Funcion que se ejecuta en cada micro-batch 
+    # Stream normal — mismo ritmo que antes
+    normal_stream = build_stream(TOPIC, "normal", max_offsets=500)
+
+    # Stream de prioridad — offsets altos para vaciar la cola rápido.
+    # Al ser un topic de prioridad se espera tráfico bajo y esporádico.
+    priority_stream = build_stream(PRIORITY_TOPIC, "priority", max_offsets=5000)
+
+    # Unión de ambos streams: Spark los procesa en el mismo micro-batch
+    combined_stream = normal_stream.union(priority_stream)
+
     STREAM_OUT.parent.mkdir(parents=True, exist_ok=True)
-    write_header = [not STREAM_OUT.exists()]  # escribimos cabecera solo la primera vez
+    write_header = [not STREAM_OUT.exists()]
 
     def score_batch(batch_df, epoch_id):
+        nonlocal seen_row_ids
+
         if batch_df.isEmpty():
             return
 
-        # Aplicamos el pipeline de ML: ensamblamos features y predecimos cluster
-        featured = assembler.transform(batch_df)
+        pdf = batch_df.toPandas()
+
+        # --- Separar registros por origen ---
+        priority_pdf = pdf[pdf["_source"] == "priority"].copy()
+        normal_pdf   = pdf[pdf["_source"] == "normal"].copy()
+
+        # Los registros de prioridad se procesan siempre y se marcan como vistos
+        new_priority_ids = set(priority_pdf["row_id"].dropna().astype(int).tolist())
+
+        # Los registros normales se filtran: descartamos los ya clasificados
+        normal_pdf = normal_pdf[
+            ~normal_pdf["row_id"].astype(int).isin(seen_row_ids)
+        ]
+
+        # Unimos los que hay que clasificar en este batch
+        to_score = pd.concat([priority_pdf, normal_pdf], ignore_index=True)
+        if to_score.empty:
+            return
+
+        # Convertimos de vuelta a Spark para usar el pipeline de ML
+        to_score_spark = spark.createDataFrame(to_score)
+        featured = assembler.transform(to_score_spark)
         scored   = model.transform(featured)
 
-        pdf = scored.select(
-            "row_id", "restaurant_name", "kafka_ts", "cluster", "features"
+        result_pdf = scored.select(
+            "row_id", "restaurant_name", "kafka_ts", "cluster", "features", "_source"
         ).toPandas()
 
-        # Calculamos la distancia euclidea al centroide del cluster asignado
-        feat_mat    = np.array(pdf["features"].tolist(), dtype=np.float32)
-        cluster_ids = pdf["cluster"].values.astype(int)
+        feat_mat    = np.array(result_pdf["features"].tolist(), dtype=np.float32)
+        cluster_ids = result_pdf["cluster"].values.astype(int)
         dists       = np.linalg.norm(feat_mat - centers[cluster_ids], axis=1)
 
-        pdf["dist_to_centroid"] = dists.astype(np.float32)
-        pdf["name"] = [
-            decode_name.get(int(v), f"#{v}") for v in pdf["restaurant_name"]
+        result_pdf["dist_to_centroid"] = dists.astype(np.float32)
+        result_pdf["name"] = [
+            decode_name.get(int(v), f"#{v}") for v in result_pdf["restaurant_name"]
         ]
-        pdf["scored_at"] = pdf["kafka_ts"].astype(str)
+        result_pdf["scored_at"] = result_pdf["kafka_ts"].astype(str)
 
-        out = pdf[["row_id", "name", "cluster", "dist_to_centroid", "scored_at"]]
+        out = result_pdf[["row_id", "name", "cluster", "dist_to_centroid", "scored_at"]]
 
-        print(f"\n Batch {epoch_id}  ({len(out)} registros)")
+        n_priority = len(priority_pdf)
+        n_normal   = len(normal_pdf)
+        print(f"\n Batch {epoch_id}  ({len(out)} registros | "
+              f"prioridad: {n_priority}, normal: {n_normal})")
         print(out.to_string(index=False, max_rows=10))
 
-        # Anadimos al CSV (mode="a") para que la app vea el historico completo
         out.to_csv(STREAM_OUT,
                    mode="a",
                    header=write_header[0],
                    index=False)
         write_header[0] = False
 
-    # Arrancar el stream 
-    query = (parsed.writeStream
+        seen_row_ids.update(new_priority_ids)
+
+    query = (combined_stream.writeStream
              .outputMode("append")
              .foreachBatch(score_batch)
              .trigger(processingTime="5 seconds")
              .start())
 
-    print(f"\nStreaming scorer arrancado.")
-    print(f"  Topic   : {TOPIC}  ({BOOTSTRAP})")
+    print(f"\nStreaming scorer arrancado (normal + prioridad).")
+    print(f"  Topics  : {TOPIC}, {PRIORITY_TOPIC}  ({BOOTSTRAP})")
     print(f"  Salida  : {STREAM_OUT}")
+    print(f"  Vistos  : {len(seen_row_ids)} row_ids cargados desde disco")
     print("  Ctrl+C para parar.\n")
 
     try:
@@ -193,4 +255,6 @@ def main():
 
 
 if __name__ == "__main__":
+    # pandas se importa aquí para que esté disponible dentro de score_batch
+    import pandas as pd
     main()
