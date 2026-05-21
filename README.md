@@ -1,6 +1,6 @@
 # TripAdvisor Restaurants Pipeline
 
-Pipeline de datos con Apache Airflow para procesar el dataset de restaurantes europeos de TripAdvisor (~1M filas, 42 columnas), entrenar un modelo KMeans con Spark ML y exponerlo en una aplicación Streamlit con soporte de streaming en tiempo real via Kafka.
+Pipeline de datos con Apache Airflow para procesar el dataset de restaurantes europeos de TripAdvisor (~1M filas, 42 columnas), entrenar un modelo KMeans con Spark ML y exponerlo en una aplicación web con soporte de streaming en tiempo real via Kafka.
 
 ---
 
@@ -8,21 +8,22 @@ Pipeline de datos con Apache Airflow para procesar el dataset de restaurantes eu
 
 ```
 proyecto/
-├── app.py                           # Punto de entrada de la app Streamlit
-├── config.py                        # Rutas y constantes globales
-├── loader.py                        # Carga de datos para la app (cached)
-├── recommendations.py               # Logica de recomendacion KMeans
-├── streaming_score.py               # Consumidor Spark Structured Streaming
+├── streaming_score.py               # Consumidor Spark Structured Streaming (KMeans)
+├── streaming_filter.py              # Consumidor Spark Structured Streaming (filtrado rápido)
 ├── train_model.py                   # Entrenamiento KMeans con Spark ML
+├── run.sh                           # Script de arranque completo (infraestructura + servicios)
 │
-├── pages/                           # Pestanas de la app Streamlit
-│   ├── explore.py                   #   Tab "Explorar": filtros, busqueda y recomendaciones
-│   └── live.py                      #   Tab "En vivo": stream en tiempo real con auto-refresh
-│
-├── ui/                              # Componentes de interfaz reutilizables
-│   ├── styles.py                    #   CSS global (fuente, colores, layout)
-│   ├── filters.py                   #   Widgets de filtrado y logica de apply_filters()
-│   └── tables.py                    #   Construccion de tablas y columnas para Streamlit
+├── webapp/                          # Aplicación web (FastAPI + React)
+│   ├── backend/
+│   │   └── main.py                  #   API REST: filtros, recomendaciones, SSE, cola de prioridad
+│   └── frontend/
+│       ├── src/
+│       │   ├── App.jsx              #   Raíz: tabs Explorar / En vivo
+│       │   ├── ExploreTab.jsx       #   Búsqueda y recomendaciones
+│       │   ├── LiveTab.jsx          #   Stream en tiempo real con SSE
+│       │   └── RecsPanel.jsx        #   Panel de recomendaciones
+│       ├── package.json
+│       └── vite.config.js
 │
 ├── dags/                            # DAGs de Apache Airflow
 │   └── pipeline.py                  #   DAG principal: extract→clean→eda→preprocessing→load
@@ -42,14 +43,13 @@ proyecto/
 │   └── struct_kafka_consumer_local.py
 │
 ├── docs/                            # Documentacion del proyecto
-│   ├── memoria.pdf                  #   PDF memoria
 │   ├── informe.md                   #   Descripcion del grafo del pipeline
 │   └── grafo_pipeline.png           #   Imagen del grafo de Airflow
 │
 ├── data/                            # Datos generados por el pipeline (no en git)
 │   ├── raw/                         #   raw.csv generado por extract
 │   ├── processed/                   #   clean.csv, preprocessed.csv y artefactos ETL
-│   └── streaming/                   #   results.csv generado por streaming_score.py
+│   └── streaming/                   #   results.csv y filter_results.csv generados por los consumidores
 │
 ├── models/                          # Artefactos del modelo (generados por train_model.py)
 │   ├── kmeans_spark/                #   Modelo KMeans serializado (formato Spark ML)
@@ -58,7 +58,7 @@ proyecto/
 │   ├── best_k.json                  #   K optimo cacheado (eliminar para repetir busqueda)
 │   └── k_selection.png              #   Grafica silhouette score vs K y metodo del codo
 │
-├── docker-compose.yml               # Kafka 
+├── docker-compose.yml               # Kafka
 ├── config.toml                      # Parametros configurables del pipeline
 ├── pyproject.toml                   # Dependencias del proyecto (uv)
 └── tripadvisor_european_restaurants.csv  # Dataset fuente (descargar de Kaggle)
@@ -72,6 +72,7 @@ proyecto/
 - [uv](https://github.com/astral-sh/uv)
 - Docker
 - Java 21 (`sudo apt install openjdk-21-jdk`)
+- Node.js 22 (`nvm use 22`)
 
 ---
 
@@ -80,6 +81,7 @@ proyecto/
 ```bash
 git clone <repo> && cd proyecto
 uv sync
+cd webapp/frontend && npm install
 ```
 
 ---
@@ -121,36 +123,16 @@ Genera `models/kmeans_spark/` y `models/cluster_assignments.parquet`.
 > ```bash
 > uv venv pyspark-411 --python 3.11
 > source pyspark-411/bin/activate
-> uv pip install pyspark==4.1.1 orjson confluent-kafka polars streamlit pandas numpy
+> uv pip install pyspark==4.1.1 orjson confluent-kafka polars pandas numpy
 > ```
 
-### 4. Levantar Kafka
+### 4. Lanzar la aplicacion completa
 
 ```bash
-docker compose up -d
+bash run.sh
 ```
 
-### 5. Lanzar la app + streaming (3 terminales)
-
-**Terminal 1 — App:**
-```bash
-source pyspark-411/bin/activate
-streamlit run app.py
-```
-
-**Terminal 2 — Productor Kafka:**
-```bash
-source pyspark-411/bin/activate
-python tasks/producer.py
-```
-
-**Terminal 3 — Spark Streaming:**
-```bash
-source pyspark-411/bin/activate
-python streaming_score.py
-```
-
-La app queda disponible en **http://localhost:8501**.
+El script arranca automáticamente: Docker (Kafka), productor, consumidores Spark, backend FastAPI y frontend React. La app queda disponible en **http://localhost:5173**.
 
 ---
 
@@ -203,34 +185,34 @@ BashOperator que ejecuta `tasks/producer.py`:
 
 ---
 
-## Streaming (`streaming_score.py`)
+## Streaming
 
-Consumidor de Spark Structured Streaming que clasifica en tiempo real los restaurantes que llegan por Kafka:
+### `streaming_filter.py` — Consumidor rápido (sin ML)
+Consume el topic `restaurants` con alta frecuencia y escribe los registros parseados en `data/streaming/filter_results.csv`. Permite que la pestaña Explorar muestre resultados antes de que KMeans los clasifique.
 
+### `streaming_score.py` — Consumidor KMeans
 1. Lee el schema del topic `restaurants_schema`
-2. Consume el topic `restaurants` en micro-batches de 5 segundos
+2. Consume en paralelo el topic `restaurants` (normal) y `restaurants_priority` (selecciones del usuario)
 3. Por cada batch: ensambla el vector de features y aplica el modelo KMeans
 4. Calcula la distancia euclidea al centroide del cluster asignado
 5. Escribe `row_id, nombre, cluster, distancia, timestamp` en `data/streaming/results.csv`
 
-La app Streamlit lee ese CSV cada 5 segundos para actualizar el tab "En vivo".
-
 ---
 
-## Aplicacion Streamlit (`app.py`)
+## Aplicacion web (`webapp/`)
 
-### Tab Explorar
-- Filtra el millon de restaurantes por pais, ciudad, precio, cocina y dieta
-- Busqueda por nombre de restaurante
-- Estadisticas en tiempo real del subconjunto filtrado
-- Click en un restaurante → 10 recomendaciones del mismo cluster ordenadas por distancia al centroide
+### Backend (FastAPI — puerto 8000)
+- `GET /api/restaurants` — lista filtrable de restaurantes (usa `filter_results.csv`)
+- `GET /api/recommendations/{row_id}` — 10 recomendaciones por similitud coseno dentro del cluster
+- `POST /api/priority/{row_id}` — encola un restaurante en `restaurants_priority` para clasificacion inmediata
+- `GET /api/stream/snapshot` — snapshot filtrado de los restaurantes ya scoreados por KMeans
+- `GET /api/stream/events` — Server-Sent Events con nuevos registros scoreados en tiempo real
+- `GET /api/stream/stats` — total scoreados y distribucion por cluster
+- `GET /api/filter/stats` — total procesados por el consumidor de filtros
 
-### Tab En vivo
-- Muestra unicamente los restaurantes que han llegado por el stream (los ya clasificados por Spark)
-- Mismos filtros que Explorar, pero acotados al subconjunto scoreado
-- Auto-refresh cada 5 segundos via `@st.fragment`
-- Grafico de distribucion por cluster
-- Recomendaciones calculadas solo sobre restaurantes del stream
+### Frontend (React + Vite — puerto 5173)
+- **Explorar**: filtros por país, ciudad, precio, rating y dieta; búsqueda por nombre; recomendaciones al seleccionar un restaurante
+- **En vivo**: tabla actualizada en tiempo real via SSE, contadores de procesados/scoreados, gráfico de distribución por cluster
 
 ---
 
@@ -248,4 +230,3 @@ La app Streamlit lee ese CSV cada 5 segundos para actualizar el tab "En vivo".
 | `[kafka]` | `bootstrap_servers`, `topic` | Conexion y topic del productor Kafka |
 
 ---
-
