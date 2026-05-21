@@ -32,12 +32,6 @@ echo "==== 3. Limpiando resultados de streaming anteriores ===="
 rm -f data/streaming/results.csv data/streaming/filter_results.csv data/streaming/seen_row_ids.json
 echo "Archivos de streaming limpiados."
 
-echo ""
-echo "==== 3. Iniciando Productor de Datos (Kafka) ===="
-echo "Ejecutando tasks/producer.py (Simulador de flujo)..."
-uv run tasks/producer.py > logs/producer.log 2>&1 &
-PRODUCER_PID=$!
-
 echo "Dando margen de 6s para la publicación de esquemas..."
 sleep 6
 

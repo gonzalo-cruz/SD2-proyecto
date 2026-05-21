@@ -71,8 +71,8 @@ proyecto/
 - Python 3.11+
 - [uv](https://github.com/astral-sh/uv)
 - Docker
-- Java 21 (`sudo apt install openjdk-21-jdk`)
-- Node.js 22 (`nvm use 22`)
+- Java 21
+- Node.js 22
 
 ---
 
@@ -92,6 +92,32 @@ cd webapp/frontend && npm install
 
 Descarga `tripadvisor_european_restaurants.csv` desde [Kaggle](https://www.kaggle.com/datasets/stefanoleone992/tripadvisor-european-restaurants/data) y colócalo en la raiz del proyecto.
 
+### 2. Instalación de requisitos
+
+Bibliotecas de Python:
+```bash
+uv sync
+source .venv/bin/activate
+```
+
+OpenJDK:
+```bash
+sudo apt install openjdk-21-jdk
+```
+
+Node.js:
+```bash
+sudo apt install nvm
+nvm install 22
+nvm use 22
+```
+
+Bibliotecas de Node.js:
+```bash
+cd webapp/frontend
+npm install
+```
+
 ### 2. Pipeline ETL (Airflow)
 
 ```bash
@@ -108,31 +134,25 @@ uv run python -m tasks.extract
 uv run python -m tasks.clean
 uv run python -m tasks.eda
 uv run python -m tasks.preprocessing
+uv run python -m tasks.load
 ```
 
 ### 3. Entrenar el modelo KMeans
 
 ```bash
-source pyspark-411/bin/activate   # entorno con PySpark 4.1.1
-python train_model.py
+uv run train_model.py
 ```
 
 Genera `models/kmeans_spark/` y `models/cluster_assignments.parquet`.
 
-> Si el entorno pyspark-411 no existe:
-> ```bash
-> uv venv pyspark-411 --python 3.11
-> source pyspark-411/bin/activate
-> uv pip install pyspark==4.1.1 orjson confluent-kafka polars pandas numpy
-> ```
-
-### 4. Lanzar la aplicacion completa
+### 4. Lanzar la aplicacion de streaming completa
 
 ```bash
 bash run.sh
 ```
 
-El script arranca automáticamente: Docker (Kafka), productor, consumidores Spark, backend FastAPI y frontend React. La app queda disponible en **http://localhost:5173**.
+El script arranca automáticamente: Docker (Kafka), consumidores Spark, backend FastAPI y frontend React. También maneja el cierre correcto de estos procesos.
+La app queda disponible en **http://localhost:5173**.
 
 ---
 
