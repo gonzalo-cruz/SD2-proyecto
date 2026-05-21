@@ -65,7 +65,7 @@ while ! (echo > /dev/tcp/127.0.0.1/8000) >/dev/null 2>&1; do
     sleep 1
 done
 
-echo "✅ Backend listo y escuchando en el puerto 8000."
+echo "Backend listo y escuchando en el puerto 8000."
 echo "Arrancando Servidor de Desarrollo del Frontend (NPM)..."
 
 # Entramos al frontend de forma segura
@@ -108,8 +108,8 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 echo "=========================================================="
-echo " 🎉 ¡Todos los componentes se están ejecutando con éxito!"
+echo " ¡Todos los componentes se están ejecutando con éxito!"
 echo "=========================================================="
-echo " 👉 Presiona [ENTER] aquí en cualquier momento para detener todo..."
+echo " Presiona [ENTER] aquí en cualquier momento para detener todo..."
 read -r
 cleanup
