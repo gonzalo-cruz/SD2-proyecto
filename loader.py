@@ -38,10 +38,10 @@ def load_data():
 
     # encode: etiqueta → código numérico, necesario para filtrar con Polars
     encode = {
-        "country":     {k: int(v) for k, v in enc.get("country", {}).items()},
-        "city":        {k: int(v) for k, v in enc.get("city",    {}).items()},
+        "country": {k: int(v) for k, v in enc.get("country", {}).items()},
+        "city": {k: int(v) for k, v in enc.get("city",    {}).items()},
         "price_level": {k: int(v) for k, v in enc.get("price_level", {}).items()},
-        "avg_rating":  {k: int(v) for k, v in enc.get("avg_rating",  {}).items()},
+        "avg_rating": {k: int(v) for k, v in enc.get("avg_rating",  {}).items()},
     }
 
     # Construimos un mapa país → lista de ciudades para el filtro en cascada
@@ -66,7 +66,7 @@ def load_data():
     # Añadimos una columna con el nombre decodificado para la búsqueda por texto,
     # calculada una sola vez aquí en lugar de hacerlo en cada interacción
     code_to_name = decode["restaurant_name"]
-    name_list    = [code_to_name.get(int(c), "") for c in df["restaurant_name"].to_list()]
+    name_list = [code_to_name.get(int(c), "") for c in df["restaurant_name"].to_list()]
     df = df.with_columns(pl.Series("_name_str", name_list, dtype=pl.Utf8))
 
     return df, decode, encode, cuisine_idx, top_cuisines, country_cities

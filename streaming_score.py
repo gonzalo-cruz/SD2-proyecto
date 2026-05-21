@@ -24,13 +24,13 @@ from pyspark.ml.clustering import KMeansModel
 
 os.environ["JAVA_HOME"] = "/usr/lib/jvm/java-21-openjdk-amd64"
 
-BASE_DIR          = Path(__file__).parent
-ENCODINGS_JSON    = BASE_DIR / "data" / "processed" / "encodings.json"
+BASE_DIR = Path(__file__).parent
+ENCODINGS_JSON = BASE_DIR / "data" / "processed" / "encodings.json"
 FEATURE_COLS_JSON = BASE_DIR / "models" / "feature_cols.json"
-KMEANS_MODEL      = BASE_DIR / "models" / "kmeans_spark"
-STREAM_OUT        = BASE_DIR / "data" / "streaming" / "results.csv"
+KMEANS_MODEL = BASE_DIR / "models" / "kmeans_spark"
+STREAM_OUT = BASE_DIR / "data" / "streaming" / "results.csv"
 
-TOPIC     = "restaurants"
+TOPIC = "restaurants"
 BOOTSTRAP = "localhost:9092"
 
 

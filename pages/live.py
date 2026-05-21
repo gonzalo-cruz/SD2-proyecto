@@ -2,8 +2,8 @@
 # y han sido clasificados por Spark Structured Streaming (streaming_score.py).
 # Arquitectura de dos fragments:
 #   _counter: auto-refresca cada 5s solo los números (ligero, sin parpadeo)
-#   _table:   sin auto-refresh; solo se refresca al hacer clic en una fila o
-#             pulsar "Actualizar" — elimina la cascada on_select + run_every
+#   _table:   sin auto-refresh; on_select="rerun" da respuesta instantánea
+#             al clic sin crear bucles. Se actualiza con el botón Actualizar.
 import pandas as pd
 import polars as pl
 import streamlit as st
@@ -20,8 +20,7 @@ def render_live(df, decode, encode, cuisine_idx, top_cuisines, country_cities):
         '<div class="rf-logo" style="font-size:2rem">Stream <em>en vivo</em></div>'
         '<div class="rf-desc">'
         'Restaurantes llegando desde Kafka, clasificados por KMeans en tiempo real. '
-        'Las recomendaciones y los filtros se aplican únicamente sobre los restaurantes '
-        'que ya han sido scoreados.'
+        'Las recomendaciones se aplican sobre los restaurantes ya scoreados.'
         '</div>'
         '</div>',
         unsafe_allow_html=True,
@@ -39,8 +38,8 @@ def render_live(df, decode, encode, cuisine_idx, top_cuisines, country_cities):
                   country_cities=country_cities, prefix="live_")
     st.markdown('<div class="rf-divider"></div>', unsafe_allow_html=True)
 
-    # Fragment 1: solo el contador numérico — una línea, sin layout complejo.
-    # Lee únicamente el CSV pequeño de resultados → muy rápido, parpadeo mínimo.
+    # Contador en vivo: solo lee el CSV pequeño, sin widgets interactivos.
+    # Sin parpadeo porque no hay on_select ni widgets con estado.
     @st.fragment(run_every="5s")
     def _counter():
         raw = pd.read_csv(STREAM_CSV)
@@ -59,9 +58,9 @@ def render_live(df, decode, encode, cuisine_idx, top_cuisines, country_cities):
 
     st.markdown('<div style="height:0.4rem"></div>', unsafe_allow_html=True)
 
-    # Fragment 2: tabla interactiva, gráfica y recomendaciones.
-    # Sin run_every → solo se refresca cuando el usuario interactúa (clic en fila
-    # o botón Actualizar), eliminando la cascada on_select + auto-refresh.
+    # Tabla y recomendaciones: sin run_every para evitar el bucle
+    # on_select="rerun" + auto-refresh que hace unusable la interfaz.
+    # on_select="rerun" funciona perfectamente aquí porque no hay timer.
     @st.fragment
     def _table():
         raw = pd.read_csv(STREAM_CSV)
@@ -93,7 +92,7 @@ def render_live(df, decode, encode, cuisine_idx, top_cuisines, country_cities):
                 f"{len(raw):,} scoreados en total"
             )
         with col_btn:
-            if st.button("↺ Actualizar", use_container_width=True):
+            if st.button("↺ Actualizar", use_container_width=True, key="live_refresh"):
                 st.rerun(scope="fragment")
 
         col_table, col_chart = st.columns([2, 1], gap="large")

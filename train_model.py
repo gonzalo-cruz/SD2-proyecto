@@ -17,16 +17,16 @@ from pyspark.ml.evaluation import ClusteringEvaluator
 
 os.environ["JAVA_HOME"] = "/usr/lib/jvm/java-21-openjdk-amd64"
 
-BASE_DIR     = Path(__file__).parent
+BASE_DIR = Path(__file__).parent
 PREPROCESSED = BASE_DIR / "data" / "processed" / "preprocessed.csv"
-TYPE_DICT    = BASE_DIR / "data" / "processed" / "type_dict_encoding.json"
-MODELS_DIR   = BASE_DIR / "models"
+TYPE_DICT = BASE_DIR / "data" / "processed" / "type_dict_encoding.json"
+MODELS_DIR = BASE_DIR / "models"
 
 # Valores de K a comparar en la fase de selección
-K_RANGE         = [10, 20, 30, 40, 50, 60, 70, 80]
+K_RANGE = [10, 20, 30, 40, 50, 60, 70, 80]
 SAMPLE_FRACTION = 0.10   # fracción del dataset para la selección de K
-SEED            = 42
-MAX_ITER        = 20
+SEED = 42
+MAX_ITER = 20
 
 
 def select_k(sdf_feat_sample):
