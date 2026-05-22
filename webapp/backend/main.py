@@ -30,9 +30,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------------------------------
 # Datos de referencia cargados al arrancar
-# ---------------------------------------------------------------------------
 
 enc = json.loads(ENC_JSON.read_text())
 
@@ -65,9 +63,8 @@ df["_rating_float"] = pd.to_numeric(df["_rating"], errors="coerce").fillna(0.0)
 countries = sorted(df["_country"].dropna().unique().tolist())
 prices    = sorted(df["_price"][df["_price"] != "—"].unique().tolist())
 
-# ---------------------------------------------------------------------------
 # Matriz de similitud coseno precomputada (para recomendaciones)
-# ---------------------------------------------------------------------------
+
 
 FEAT_COLS = ["country", "city", "avg_rating", "price_level",
              "vegetarian_friendly", "vegan_options", "gluten_free"]
@@ -81,9 +78,7 @@ del _feat, _norms
 ENRICH_COLS = ["row_id", "_country", "_city", "_price", "_rating",
                "vegetarian_friendly", "vegan_options", "gluten_free"]
 
-# ---------------------------------------------------------------------------
 # Productor Kafka para la cola de prioridad
-# ---------------------------------------------------------------------------
 
 _kafka_producer: Producer | None = None
 
@@ -93,9 +88,7 @@ def get_kafka_producer() -> Producer:
         _kafka_producer = Producer({"bootstrap.servers": KAFKA_SERVERS, "acks": "all"})
     return _kafka_producer
 
-# ---------------------------------------------------------------------------
 # Helpers de enriquecimiento y caché del stream
-# ---------------------------------------------------------------------------
 
 def enrich_stream(raw_stream: pd.DataFrame) -> pd.DataFrame:
     tmp = raw_stream.copy()
@@ -196,10 +189,7 @@ def to_dict(row) -> dict:
         "gf":      bool(row.get("gluten_free", 0)),
     }
 
-# ---------------------------------------------------------------------------
 # Endpoints
-# ---------------------------------------------------------------------------
-
 @app.get("/api/countries")
 def get_countries():
     return countries
@@ -231,7 +221,7 @@ def get_restaurants(
     limit: int = 100,
 ):
     """
-    MODIFICADO: ahora lee de filter_results.csv (consumidor rápido sin ML)
+    Ahora lee de filter_results.csv (consumidor rápido sin ML)
     en lugar de results.csv (consumidor KMeans).
     Esto garantiza que el usuario vea resultados incluso cuando el consumidor
     KMeans todavía no ha procesado esos registros.
@@ -266,7 +256,7 @@ def get_restaurants(
 @app.post("/api/priority/{row_id}", status_code=202)
 def enqueue_priority(row_id: int):
     """
-    NUEVO: Publica el restaurante indicado en el topic de prioridad de Kafka
+    Publica el restaurante indicado en el topic de prioridad de Kafka
     para que el consumidor KMeans lo clasifique inmediatamente, sin esperar
     a que el stream normal llegue a ese registro.
 
@@ -311,7 +301,7 @@ def enqueue_priority(row_id: int):
 @app.get("/api/recommendations/{row_id}")
 def get_recommendations(row_id: int):
     """
-    MODIFICADO: si el restaurante aún no ha sido clasificado por KMeans,
+    Si el restaurante aún no ha sido clasificado por KMeans,
     devuelve {"status": "pending"} en lugar de una lista vacía, para que
     el frontend sepa que debe reintentar después de encolar una solicitud
     de prioridad (POST /api/priority/{row_id}).

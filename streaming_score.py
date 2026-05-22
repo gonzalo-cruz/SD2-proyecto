@@ -1,7 +1,5 @@
 # Consumidor de Spark Structured Streaming que clasifica los restaurantes
 # que llegan por Kafka en tiempo real usando el modelo KMeans entrenado.
-#
-# MODIFICADO respecto a la versión original:
 #   - Lee de DOS topics en paralelo:
 #       · 'restaurants'          → stream normal (mismo ritmo que antes)
 #       · 'restaurants_priority' → cola de prioridad para restaurantes que el
@@ -14,7 +12,7 @@
 #   - El conjunto seen_row_ids se persiste en disco (seen_row_ids.json) para
 #     sobrevivir reinicios del proceso.
 #
-#   Flujo original (sin cambios):
+#   Flujo original:
 #   1. Lee el schema del topic 'restaurants_schema'
 #   2. Consume micro-batches de 5 s del topic normal
 #   3. Ensambla features → KMeans → distancia al centroide
@@ -182,7 +180,7 @@ def main():
 
         pdf = batch_df.toPandas()
 
-        # --- Separar registros por origen ---
+        # Separar registros por origen 
         priority_pdf = pdf[pdf["_source"] == "priority"].copy()
         normal_pdf   = pdf[pdf["_source"] == "normal"].copy()
 
