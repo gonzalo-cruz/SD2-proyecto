@@ -118,7 +118,15 @@ cd webapp/frontend
 npm install
 ```
 
-### 2. Pipeline ETL (Airflow)
+### 2. Levantar Kafka (Docker)
+
+Kafka debe estar corriendo antes de ejecutar el pipeline (lo necesita la tarea `load`):
+
+```bash
+docker compose up -d
+```
+
+### 3. Pipeline ETL (Airflow)
 
 ```bash
 AIRFLOW_HOME=$(pwd) uv run airflow standalone
@@ -137,7 +145,7 @@ uv run python -m tasks.preprocessing
 uv run python -m tasks.load
 ```
 
-### 3. Entrenar el modelo KMeans
+### 4. Entrenar el modelo KMeans
 
 ```bash
 uv run train_model.py
@@ -145,7 +153,7 @@ uv run train_model.py
 
 Genera `models/kmeans_spark/` y `models/cluster_assignments.parquet`.
 
-### 4. Lanzar la aplicacion de streaming completa
+### 5. Lanzar la aplicacion de streaming completa
 
 ```bash
 bash run.sh
