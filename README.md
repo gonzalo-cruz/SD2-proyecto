@@ -135,7 +135,7 @@ AIRFLOW_HOME=$(pwd) uv run airflow standalone
 Abre **http://localhost:8080** — credenciales en `simple_auth_manager_passwords.json.generated`.
 Activa y dispara el DAG `tripadvisor_pipeline`.
 
-O ejecutar las tasks manualmente:
+O ejecutar las tasks manualmente (para la app se puede obviar eda, que es la que más tarda):
 
 ```bash
 uv run python -m tasks.extract
