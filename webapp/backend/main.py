@@ -286,11 +286,9 @@ def enqueue_priority(row_id: int):
 
     record = preprocessed_df.loc[row_id].to_dict()
     record["row_id"] = int(row_id)
-    # sanitize_col: reemplazar '.' por '_' en los nombres de clave para que coincidan
-    # con el schema que Spark construye desde type_dict_encoding.json.
-    # streaming_score.py hace lo mismo via sanitize_col() en el rename_map;
-    # si los keys del JSON tienen puntos, Spark los parsea como null → NaN → crash.
-    record = {k.replace(".", "_"): v for k, v in record.items()}
+    # Los keys deben conservar los puntos (ej. avg_rating__1.0) para que Spark
+    # los parsee correctamente contra spark_schema. streaming_score.py renombra
+    # los puntos a '_' DESPUÉS del parseo, igual que hace con el stream normal.
 
     # Serializar y publicar en Kafka
     try:
