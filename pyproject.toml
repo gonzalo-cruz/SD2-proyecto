@@ -16,7 +16,6 @@ dependencies = [
     "orjson>=3.11.8",
     "pyspark>=4.1.1",
     "polars>=1.40.1",
-    "streamlit>=1.57.0",
     "fastapi>=0.117.1",
     "uvicorn>=0.43.0",
 ]
