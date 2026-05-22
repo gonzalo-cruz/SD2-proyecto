@@ -110,3 +110,18 @@ nav        { display: flex; gap: .5rem; margin-left: auto; }
 /* Misc */
 .muted  { color: var(--muted); font-size: .875rem; padding: 1rem 0; }
 .small  { font-size: .75rem; }
+
+/* Pending / priority-queue state in RecsPanel */
+.pending-state {
+  display: flex; flex-direction: column; align-items: center;
+  gap: .75rem; padding: 1.5rem 0;
+}
+.pending-spinner {
+  width: 28px; height: 28px;
+  border: 3px solid var(--border);
+  border-top-color: var(--teal);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.pending-msg { text-align: center; line-height: 1.5; }

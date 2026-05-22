@@ -3,27 +3,25 @@
 URL_FRONTEND="http://localhost:5173"
 mkdir -p logs
 
-echo "==== 0. Preparando Entorno ===="
+echo "==== 1. Preparando Entorno ===="
 export NVM_DIR="$HOME/.nvm"
 if [ -s "$NVM_DIR/nvm.sh" ]; then
     \. "$NVM_DIR/nvm.sh"
     nvm use 22 > /dev/null 2>&1
 fi
 
-echo ""
-echo "==== 1. Iniciando Infraestructura (Docker) ===="
-docker compose up -d
-echo "Esperando 12 segundos para que Kafka inicialice puertos y broker..."
-sleep 12
-
 echo "==== 2. Autocreando Topics en Kafka ===="
 KAFKA_CONTAINER=$(docker ps --filter "name=local-kafka" --format "{{.Names}}" | head -n 1)
 [ -z "$KAFKA_CONTAINER" ] && KAFKA_CONTAINER=$(docker ps --filter "name=kafka" --format "{{.Names}}" | head -n 1)
 
 if [ -n "$KAFKA_CONTAINER" ]; then
-    for topic in restaurants_schema restaurants restaurants_priority; do
+    for topic in restaurants_schema restaurants; do
         docker exec "$KAFKA_CONTAINER" kafka-topics --create --topic "$topic" --bootstrap-server localhost:9092 --if-not-exists > /dev/null 2>&1
     done
+    # La cola de prioridad se borra y recrea siempre para evitar mensajes envenenados
+    # de sesiones anteriores que crashearían el scorer KMeans al arrancar.
+    docker exec "$KAFKA_CONTAINER" kafka-topics --delete --topic restaurants_priority --bootstrap-server localhost:9092 > /dev/null 2>&1 || true
+    docker exec "$KAFKA_CONTAINER" kafka-topics --create --topic restaurants_priority --bootstrap-server localhost:9092 > /dev/null 2>&1
     echo "Topics base preparados con éxito."
 fi
 

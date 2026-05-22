@@ -14,8 +14,9 @@ PROJECT    = Path(__file__).parent.parent.parent
 CLEAN_CSV  = PROJECT / "data/processed/clean.csv"
 ASSIGN_PQ  = PROJECT / "models/cluster_assignments.parquet"
 ENC_JSON   = PROJECT / "data/processed/encodings.json"
-STREAM_CSV = PROJECT / "data/streaming/results.csv"
-FILTER_CSV = PROJECT / "data/streaming/filter_results.csv"
+STREAM_CSV       = PROJECT / "data/streaming/results.csv"
+FILTER_CSV       = PROJECT / "data/streaming/filter_results.csv"
+PREPROCESSED_CSV = PROJECT / "data/processed/preprocessed.csv"
 
 # Topic de Kafka al que se publican los restaurantes que el usuario selecciona
 # antes de que el consumidor KMeans haya llegado a ellos.
@@ -30,7 +31,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---------------------------------------------------------------------------
 # Datos de referencia cargados al arrancar
+# ---------------------------------------------------------------------------
 
 enc = json.loads(ENC_JSON.read_text())
 
@@ -52,6 +55,13 @@ raw.insert(0, "row_id", np.arange(len(raw), dtype=np.int32))
 assign = pd.read_parquet(ASSIGN_PQ)
 df     = raw.merge(assign, on="row_id")
 
+# preprocessed_df: columnas OHE que el modelo KMeans espera.
+# Solo se usa en enqueue_priority para publicar el registro correcto al topic de prioridad.
+# Se carga con low_memory=False y se indexa por row_id para lookups O(1).
+preprocessed_df = pd.read_csv(PREPROCESSED_CSV, low_memory=False)
+preprocessed_df.insert(0, "row_id", np.arange(len(preprocessed_df), dtype=np.int32))
+preprocessed_df = preprocessed_df.set_index("row_id")
+
 df["_name"]    = df["restaurant_name"].map(decode_name).fillna("—")
 df["_country"] = df["country"].map(decode_country).fillna("—")
 df["_city"]    = df["city"].map(decode_city).fillna("—")
@@ -63,8 +73,9 @@ df["_rating_float"] = pd.to_numeric(df["_rating"], errors="coerce").fillna(0.0)
 countries = sorted(df["_country"].dropna().unique().tolist())
 prices    = sorted(df["_price"][df["_price"] != "—"].unique().tolist())
 
+# ---------------------------------------------------------------------------
 # Matriz de similitud coseno precomputada (para recomendaciones)
-
+# ---------------------------------------------------------------------------
 
 FEAT_COLS = ["country", "city", "avg_rating", "price_level",
              "vegetarian_friendly", "vegan_options", "gluten_free"]
@@ -75,10 +86,12 @@ _norms[_norms == 0] = 1.0
 feat_norm = _feat / _norms
 del _feat, _norms
 
-ENRICH_COLS = ["row_id", "_country", "_city", "_price", "_rating",
+ENRICH_COLS = ["row_id", "_name", "_country", "_city", "_price", "_rating",
                "vegetarian_friendly", "vegan_options", "gluten_free"]
 
+# ---------------------------------------------------------------------------
 # Productor Kafka para la cola de prioridad
+# ---------------------------------------------------------------------------
 
 _kafka_producer: Producer | None = None
 
@@ -88,31 +101,33 @@ def get_kafka_producer() -> Producer:
         _kafka_producer = Producer({"bootstrap.servers": KAFKA_SERVERS, "acks": "all"})
     return _kafka_producer
 
+# ---------------------------------------------------------------------------
 # Helpers de enriquecimiento y caché del stream
+# ---------------------------------------------------------------------------
 
 def enrich_stream(raw_stream: pd.DataFrame) -> pd.DataFrame:
     tmp = raw_stream.copy()
     tmp["row_id"] = tmp["row_id"].astype(np.int32)
-    enriched = tmp.merge(df[ENRICH_COLS], on="row_id", how="left")
-    for col in ["_country", "_city", "_price", "_rating"]:
-        enriched[col] = enriched[col].fillna("—")
-    for col in ["vegetarian_friendly", "vegan_options", "gluten_free"]:
-        enriched[col] = enriched[col].fillna(0).astype(int)
-    enriched["_rating_float"] = pd.to_numeric(enriched["_rating"], errors="coerce").fillna(0.0)
-    return enriched
-
-
-def enrich_filter(raw_filter: pd.DataFrame) -> pd.DataFrame:
-    tmp = raw_filter.copy()
-    tmp["row_id"] = tmp["row_id"].astype(np.int32)
-    # Los mensajes Kafka tienen datos OHE (preprocessed.csv), no los campos simples.
-    # Enriquecemos mergeando con df (clean.csv) por row_id, igual que enrich_stream.
-    enriched = tmp.merge(df[ENRICH_COLS + ["_name"]], on="row_id", how="left")
+    # Incluimos _name para que los registros SSE tengan el nombre legible
+    enrich_cols = ENRICH_COLS + ["_name"]
+    enriched = tmp.merge(df[enrich_cols], on="row_id", how="left")
     for col in ["_country", "_city", "_price", "_rating", "_name"]:
         enriched[col] = enriched[col].fillna("—")
     for col in ["vegetarian_friendly", "vegan_options", "gluten_free"]:
         enriched[col] = enriched[col].fillna(0).astype(int)
     enriched["_rating_float"] = pd.to_numeric(enriched["_rating"], errors="coerce").fillna(0.0)
+    # Renombrar a los nombres que usa el frontend (sin prefijo _) para consistencia
+    # con to_dict y to_dict_live, que son la fuente de datos del snapshot.
+    enriched = enriched.rename(columns={
+        "_name":    "name",
+        "_country": "country",
+        "_city":    "city",
+        "_price":   "price",
+        "_rating":  "rating",
+    })
+    # dist_to_centroid → dist para que coincida con to_dict / to_dict_live
+    if "dist_to_centroid" in enriched.columns:
+        enriched["dist"] = enriched["dist_to_centroid"].round(4)
     return enriched
 
 
@@ -131,50 +146,26 @@ def get_enriched_stream() -> pd.DataFrame:
     return _stream_cache
 
 
-# Caché del stream de filtros (resultados sin clasificar, llegan antes)
-_filter_cache: pd.DataFrame = pd.DataFrame()
-_filter_cache_mtime: float = -1.0
+# Caché de row_ids vistos por el consumidor de filtros (filter_results.csv).
+# Solo contiene row_ids — el enriquecimiento se hace contra df en memoria.
+_filter_ids_cache: set = set()
+_filter_ids_mtime: float = -1.0
 
-def get_enriched_filter() -> pd.DataFrame:
-    global _filter_cache, _filter_cache_mtime
+def get_filtered_row_ids() -> set:
+    global _filter_ids_cache, _filter_ids_mtime
     if not FILTER_CSV.exists():
-        return pd.DataFrame()
+        return set()
     mtime = FILTER_CSV.stat().st_mtime
-    if _filter_cache.empty or mtime != _filter_cache_mtime:
-        _filter_cache = enrich_filter(pd.read_csv(FILTER_CSV))
-        _filter_cache_mtime = mtime
-    return _filter_cache
-
-
-def to_dict_filter(row) -> dict:
-    """Serializa una fila del consumidor de filtros (sin cluster ni dist)."""
-    # cluster y dist pueden no existir todavía; los marcamos como None
-    scored = get_enriched_stream()
-    cluster = None
-    dist    = None
-    if not scored.empty:
-        match = scored[scored["row_id"] == int(row["row_id"])]
-        if not match.empty:
-            cluster = int(match.iloc[0]["cluster"])
-            dist    = round(float(match.iloc[0]["dist_to_centroid"]), 4)
-
-    return {
-        "row_id":   int(row["row_id"]),
-        "name":     row["_name"],
-        "country":  row["_country"],
-        "city":     row["_city"],
-        "rating":   row["_rating"],
-        "price":    row["_price"],
-        "cluster":  cluster,   # None si aún no ha pasado por KMeans
-        "dist":     dist,      # None si aún no ha pasado por KMeans
-        "veg":      bool(row.get("vegetarian_friendly", 0)),
-        "vegan":    bool(row.get("vegan_options", 0)),
-        "gf":       bool(row.get("gluten_free", 0)),
-    }
+    if not _filter_ids_cache or mtime != _filter_ids_mtime:
+        _filter_ids_cache = set(
+            pd.read_csv(FILTER_CSV, usecols=["row_id"])["row_id"].astype(np.int32).tolist()
+        )
+        _filter_ids_mtime = mtime
+    return _filter_ids_cache
 
 
 def to_dict(row) -> dict:
-    """Serializa una fila del consumidor KMeans (con cluster y dist)."""
+    """Serializa una fila con cluster y dist garantizados (df estático o results.csv)."""
     return {
         "row_id":  int(row["row_id"]),
         "name":    row["_name"],
@@ -189,7 +180,33 @@ def to_dict(row) -> dict:
         "gf":      bool(row.get("gluten_free", 0)),
     }
 
+
+def to_dict_live(row) -> dict:
+    """Serializa una fila del Live tab: cluster y dist pueden ser None
+    para restaurantes vistos por el filtro pero aún no clasificados por KMeans.
+    Acepta tanto los campos renombrados de enrich_stream (name, country, city...)
+    como los campos con prefijo _ de df (para el modo búsqueda del snapshot)."""
+    cluster = row.get("cluster")
+    # dist puede venir como 'dist' (enrich_stream renombrado) o 'dist_to_centroid' (merge search mode)
+    dist = row.get("dist") if row.get("dist") is not None else row.get("dist_to_centroid")
+    return {
+        "row_id":  int(row["row_id"]),
+        "name":    row.get("name") or row.get("_name", "—"),
+        "country": row.get("country") or row.get("_country", "—"),
+        "city":    row.get("city") or row.get("_city", "—"),
+        "rating":  row.get("rating") or row.get("_rating", "—"),
+        "price":   row.get("price") or row.get("_price", "—"),
+        "cluster": int(cluster) if pd.notna(cluster) else None,
+        "dist":    round(float(dist), 4) if dist is not None and pd.notna(dist) else None,
+        "veg":     bool(row.get("vegetarian_friendly", 0)),
+        "vegan":   bool(row.get("vegan_options", 0)),
+        "gf":      bool(row.get("gluten_free", 0)),
+    }
+
+# ---------------------------------------------------------------------------
 # Endpoints
+# ---------------------------------------------------------------------------
+
 @app.get("/api/countries")
 def get_countries():
     return countries
@@ -220,18 +237,7 @@ def get_restaurants(
     search: str = "",
     limit: int = 100,
 ):
-    """
-    Ahora lee de filter_results.csv (consumidor rápido sin ML)
-    en lugar de results.csv (consumidor KMeans).
-    Esto garantiza que el usuario vea resultados incluso cuando el consumidor
-    KMeans todavía no ha procesado esos registros.
-    Los campos 'cluster' y 'dist' pueden ser None para restaurantes aún no
-    clasificados por KMeans.
-    """
-    filt = get_enriched_filter()
-    if filt.empty:
-        return []
-
+    filt = df
     if country != "Todos":
         filt = filt[filt["_country"] == country]
     if city != "Todos":
@@ -248,15 +254,14 @@ def get_restaurants(
         filt = filt[filt["_rating_float"] >= min_rating]
     if price != "Todos":
         filt = filt[filt["_price"] == price]
-
-    filt = filt.head(limit)
-    return [to_dict_filter(r) for r in filt.to_dict("records")]
+    filt = filt.sort_values("dist_to_centroid").head(limit)
+    return [to_dict(r) for r in filt.to_dict("records")]
 
 
 @app.post("/api/priority/{row_id}", status_code=202)
 def enqueue_priority(row_id: int):
     """
-    Publica el restaurante indicado en el topic de prioridad de Kafka
+    NUEVO: Publica el restaurante indicado en el topic de prioridad de Kafka
     para que el consumidor KMeans lo clasifique inmediatamente, sin esperar
     a que el stream normal llegue a ese registro.
 
@@ -273,14 +278,19 @@ def enqueue_priority(row_id: int):
     if not scored.empty and not scored[scored["row_id"] == row_id].empty:
         return {"status": "already_scored", "row_id": row_id}
 
-    # Buscar el registro en el dataset de referencia
-    row = df[df["row_id"] == row_id]
-    if row.empty:
+    # Buscar el registro en preprocessed_df (columnas OHE que el modelo KMeans espera).
+    # NO usar df (clean.csv) porque tiene columnas pre-encoding que producirían NaN
+    # en el VectorAssembler y crashearían el scorer con una norma NaN.
+    if row_id not in preprocessed_df.index:
         raise HTTPException(status_code=404, detail=f"row_id {row_id} no encontrado")
 
-    # Construir el mensaje con los campos que el consumidor KMeans espera
-    record = row.iloc[0].to_dict()
+    record = preprocessed_df.loc[row_id].to_dict()
     record["row_id"] = int(row_id)
+    # sanitize_col: reemplazar '.' por '_' en los nombres de clave para que coincidan
+    # con el schema que Spark construye desde type_dict_encoding.json.
+    # streaming_score.py hace lo mismo via sanitize_col() en el rename_map;
+    # si los keys del JSON tienen puntos, Spark los parsea como null → NaN → crash.
+    record = {k.replace(".", "_"): v for k, v in record.items()}
 
     # Serializar y publicar en Kafka
     try:
@@ -301,7 +311,7 @@ def enqueue_priority(row_id: int):
 @app.get("/api/recommendations/{row_id}")
 def get_recommendations(row_id: int):
     """
-    Si el restaurante aún no ha sido clasificado por KMeans,
+    MODIFICADO: si el restaurante aún no ha sido clasificado por KMeans,
     devuelve {"status": "pending"} en lugar de una lista vacía, para que
     el frontend sepa que debe reintentar después de encolar una solicitud
     de prioridad (POST /api/priority/{row_id}).
@@ -352,22 +362,70 @@ def get_snapshot(
     vegan: bool = False,
     gf: bool = False,
 ):
-    # El snapshot sigue usando el stream KMeans (tiene cluster y dist)
-    enriched = get_enriched_stream()
-    if enriched.empty:
+    scored = get_enriched_stream()
+
+    # Detectar si hay filtros activos para decidir el modo
+    has_filters = any([
+        country != "Todos", city != "Todos", price != "Todos",
+        min_rating > 0.0, veg, vegan, gf,
+    ])
+
+    if not has_filters:
+        # --- Modo overview: solo resultados KMeans, ordenados por llegada ---
+        if scored.empty:
+            return []
+        return [to_dict_live(r) for r in (scored
+                .sort_values("scored_at", ascending=False)
+                .head(limit)
+                .to_dict("records"))]
+
+    # --- Modo búsqueda: combinar scored (results.csv) + unscored (filter_results.csv) ---
+    # Partimos de los row_ids que el consumidor de filtros ha visto (más adelantado)
+    filter_ids = get_filtered_row_ids()
+    if not filter_ids:
         return []
-    if country != "Todos":   enriched = enriched[enriched["_country"] == country]
-    if city != "Todos":      enriched = enriched[enriched["_city"] == city]
-    if price != "Todos":     enriched = enriched[enriched["_price"] == price]
-    if veg:                  enriched = enriched[enriched["vegetarian_friendly"] == 1]
-    if vegan:                enriched = enriched[enriched["vegan_options"] == 1]
-    if gf:                   enriched = enriched[enriched["gluten_free"] == 1]
-    if min_rating > 0.0:     enriched = enriched[enriched["_rating_float"] >= min_rating]
-    return (enriched
-            .sort_values("scored_at", ascending=False)
+
+    # Construimos un DataFrame base desde df para todos los row_ids del filtro,
+    # con los campos de clean.csv correctamente decodificados
+    base = df[df["row_id"].isin(filter_ids)][
+        ["row_id", "_name", "_country", "_city", "_rating", "_rating_float",
+         "_price", "vegetarian_friendly", "vegan_options", "gluten_free"]
+    ].copy()
+
+    # Aplicar filtros sobre el conjunto combinado
+    if country != "Todos":  base = base[base["_country"] == country]
+    if city != "Todos":     base = base[base["_city"] == city]
+    if price != "Todos":    base = base[base["_price"] == price]
+    if veg:                 base = base[base["vegetarian_friendly"] == 1]
+    if vegan:               base = base[base["vegan_options"] == 1]
+    if gf:                  base = base[base["gluten_free"] == 1]
+    if min_rating > 0.0:    base = base[base["_rating_float"] >= min_rating]
+
+    if base.empty:
+        return []
+
+    # Enriquecer con cluster y dist_to_centroid para los que ya han sido clasificados.
+    # Los que no están en scored quedan con NaN en esas columnas → None en to_dict_live.
+    # Forzamos int32 en ambos lados para evitar que el merge falle en silencio por
+    # un mismatch de dtypes (df usa int32, results.csv se lee como int64 por defecto).
+    if not scored.empty:
+        scored_cols = scored[["row_id", "cluster", "dist", "scored_at"]].copy()
+        scored_cols["row_id"] = scored_cols["row_id"].astype(np.int32)
+        base["row_id"] = base["row_id"].astype(np.int32)
+        base = base.merge(scored_cols, on="row_id", how="left")
+    else:
+        base["cluster"]          = None
+        base["dist"] = None
+        base["scored_at"]        = None
+
+    # Ordenar: primero los ya clasificados (tienen scored_at), luego el resto
+    base["_is_scored"] = base["scored_at"].notna()
+    base = (base
+            .sort_values(["_is_scored", "scored_at"], ascending=[False, False])
             .head(limit)
-            .drop(columns=["_rating_float"], errors="ignore")
-            .to_dict("records"))
+            .drop(columns=["_is_scored", "_rating_float"], errors="ignore"))
+
+    return [to_dict_live(r) for r in base.to_dict("records")]
 
 
 @app.get("/api/stream/stats")
@@ -409,7 +467,8 @@ async def stream_events():
                         new_rows = snap.iloc[last:]
                         enriched = enrich_stream(new_rows)
                         last = len(snap)
-                        yield f"data: {json.dumps(enriched.to_dict('records'))}\n\n"
+                        live_records = [to_dict_live(r) for r in enriched.to_dict("records")]
+                        yield f"data: {json.dumps(live_records)}\n\n"
                     else:
                         yield ": ping\n\n"
             except Exception:

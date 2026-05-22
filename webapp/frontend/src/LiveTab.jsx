@@ -106,13 +106,13 @@ export default function LiveTab({ countries, prices }) {
         const fresh = incoming
           .filter(r => !existing.has(r.row_id))
           .filter(r => {
-            if (f.country !== 'Todos' && r._country !== f.country) return false
-            if (f.city    !== 'Todos' && r._city    !== f.city)    return false
-            if (f.price   !== 'Todos' && r._price   !== f.price)   return false
-            if (f.veg   && !r.vegetarian_friendly) return false
-            if (f.vegan && !r.vegan_options)       return false
-            if (f.gf    && !r.gluten_free)         return false
-            if (minR > 0 && (parseFloat(r._rating) || 0) < minR)  return false
+            if (f.country !== 'Todos' && r.country !== f.country) return false
+            if (f.city    !== 'Todos' && r.city    !== f.city)    return false
+            if (f.price   !== 'Todos' && r.price   !== f.price)   return false
+            if (f.veg   && !r.veg)   return false
+            if (f.vegan && !r.vegan) return false
+            if (f.gf    && !r.gf)    return false
+            if (minR > 0 && (parseFloat(r.rating) || 0) < minR)  return false
             return true
           })
         if (fresh.length === 0) return prev
@@ -134,13 +134,13 @@ export default function LiveTab({ countries, prices }) {
   const filteredRows = useMemo(() => {
     const minR = parseFloat(filters.min_rating) || 0
     return rows.filter(row => {
-      if (filters.country !== 'Todos' && row._country !== filters.country) return false
-      if (filters.city    !== 'Todos' && row._city    !== filters.city)    return false
-      if (filters.price   !== 'Todos' && row._price   !== filters.price)   return false
-      if (filters.veg   && !row.vegetarian_friendly) return false
-      if (filters.vegan && !row.vegan_options)       return false
-      if (filters.gf    && !row.gluten_free)         return false
-      if (minR > 0 && (parseFloat(row._rating) || 0) < minR) return false
+      if (filters.country !== 'Todos' && row.country !== filters.country) return false
+      if (filters.city    !== 'Todos' && row.city    !== filters.city)    return false
+      if (filters.price   !== 'Todos' && row.price   !== filters.price)   return false
+      if (filters.veg   && !row.veg)   return false
+      if (filters.vegan && !row.vegan) return false
+      if (filters.gf    && !row.gf)    return false
+      if (minR > 0 && (parseFloat(row.rating) || 0) < minR) return false
       return true
     })
   }, [rows, filters])
@@ -256,13 +256,13 @@ export default function LiveTab({ countries, prices }) {
                   className={row.row_id === selectedId ? 'selected' : ''}
                 >
                   <td>{row.name}</td>
-                  <td>{row._country}</td>
-                  <td>{row._city}</td>
-                  <td>{row._rating}</td>
-                  <td>{row.cluster}</td>
-                  <td>{typeof row.dist_to_centroid === 'number'
-                        ? row.dist_to_centroid.toFixed(4) : row.dist_to_centroid}</td>
-                  <td className="muted small">{row.scored_at}</td>
+                  <td>{row.country}</td>
+                  <td>{row.city}</td>
+                  <td>{row.rating}</td>
+                  <td>{row.cluster ?? '—'}</td>
+                  <td>{typeof row.dist === 'number'
+                        ? row.dist.toFixed(4) : '—'}</td>
+                  <td className="muted small">{row.scored_at ?? '—'}</td>
                 </tr>
               ))}
             </tbody>
