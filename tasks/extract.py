@@ -1,6 +1,6 @@
 import logging
 import tomllib
-import pandas as pd
+import polars as pl
 from pathlib import Path
 
 # Rutas de entrada y salida
@@ -28,10 +28,14 @@ def extract():
     log.info("Iniciando extracción desde %s", SOURCE_CSV)
 
     # Leemos el CSV en trozos para no cargar todo en memoria
-    for i, chunk in enumerate(pd.read_csv(SOURCE_CSV, chunksize=CHUNK_SIZE, low_memory=False)):
+    for i, chunk in enumerate(pl.scan_csv(SOURCE_CSV).collect_batches(chunk_size=CHUNK_SIZE)):
         # El primer chunk escribe el header, añadimos los siguientes sin header
-        chunk.to_csv(OUTPUT_CSV, mode="w" if first_chunk else "a", header=first_chunk, index=False)
-        first_chunk = False
+        if first_chunk:
+            chunk.write_csv(OUTPUT_CSV)
+            first_chunk = False
+        else:
+            with open(OUTPUT_CSV, "a") as f:
+                f.write(chunk.write_csv(include_header=False))
         total_rows += len(chunk)
         log.info("Batch %d — %d filas acumuladas", i + 1, total_rows)
 

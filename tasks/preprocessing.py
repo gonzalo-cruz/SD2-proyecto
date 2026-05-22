@@ -1,8 +1,8 @@
-import json
+import orjson
 import logging
 import pickle
 import tomllib
-import pandas as pd
+import polars as pl
 import numpy as np
 from pathlib import Path
 from sklearn.preprocessing import StandardScaler
@@ -32,12 +32,12 @@ def preprocessing():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # Cargamos el diccionario de los tipos y los encodings para saber que hacer con cada columna
-    with open(TYPE_DICT, encoding="utf-8") as f:
-        type_dict = json.load(f)
-    with open(ENCODINGS, encoding="utf-8") as f:
-        encodings = json.load(f)
+    with open(TYPE_DICT, "rb") as f:
+        type_dict = orjson.loads(f.read())
+    with open(ENCODINGS, "rb") as f:
+        encodings = orjson.loads(f.read())
 
-    # Separamos columnas por cmo las vamos a tratar
+    # Separamos columnas por como las vamos a tratar
     numeric_cols = [c for c, t in type_dict.items() if t in ("numeric", "numeric_continuous", "numeric_discrete")]
     ohe_cols     = [c for c, t in type_dict.items()
                     if t in ("categorical", "boolean", "numeric_categorical") and len(encodings.get(c, {})) <= OHE_MAX_CARDINALITY]
@@ -57,8 +57,10 @@ def preprocessing():
         n_components = max(1, min(len(numeric_cols) - 1, 50))
         ipca = IncrementalPCA(n_components=n_components)
 
-        for i, chunk in enumerate(pd.read_csv(INPUT_CSV, usecols=numeric_cols, chunksize=CHUNK_SIZE, low_memory=False)):
-            X = chunk[numeric_cols].to_numpy(dtype=np.float64)
+        for i, chunk in enumerate(pl.scan_csv(INPUT_CSV)
+                                   .select(numeric_cols).collect_batches(chunk_size=CHUNK_SIZE)):
+            # to_numpy() para compatibilidad con sklearn
+            X = chunk.to_numpy(allow_copy=True).astype(np.float64)
 
             # partial_fit actualiza las estadísticas del scaler sin transformar
             scaler.partial_fit(X)
@@ -77,42 +79,55 @@ def preprocessing():
     # Aplicar las transformaciones y guardar preprocessed.csv
     log.info("Transformando datos y guardando preprocessed.csv...")
 
-    available_cols = list(pd.read_csv(INPUT_CSV, nrows=0).columns)
+    available_cols = pl.read_csv(INPUT_CSV, n_rows=0).columns
     cols_to_read   = [c for c in (numeric_cols + ohe_cols + label_cols + passthrough) if c in available_cols]
 
     output_path = OUTPUT_DIR / "preprocessed.csv"
     total_rows  = 0
     first_chunk = True
 
-    for i, chunk in enumerate(pd.read_csv(INPUT_CSV, usecols=cols_to_read, chunksize=CHUNK_SIZE, low_memory=False)):
+    for i, chunk in enumerate(pl.scan_csv(INPUT_CSV)
+                               .select(cols_to_read).collect_batches(chunk_size=CHUNK_SIZE)):
         parts = []
 
         # Escalar columnas numéricas con el scaler ya ajustado
         if numeric_cols:
-            X_scaled = scaler.transform(chunk[numeric_cols].to_numpy(dtype=np.float64))
-            parts.append(pd.DataFrame(X_scaled, columns=numeric_cols, index=chunk.index))
+            X_scaled = scaler.transform(chunk.select(numeric_cols).to_numpy(allow_copy=True).astype(np.float64))
+            parts.append(pl.DataFrame(X_scaled, schema=numeric_cols))
 
         # OHE: crear una columna binaria por cada valor posible
         for col in ohe_cols:
             mapping = encodings.get(col, {})
-            inv_map = {v: k for k, v in mapping.items()}                    # int → string original
-            labels  = chunk[col].map(inv_map).fillna("unknown").astype(str) # recuperar el string
+            inv_map = {str(v): k for k, v in mapping.items()}   # "int_str" → string original
+            # Recuperar el string original desde el entero codificado
+            labels = chunk[col].cast(pl.String).replace(inv_map).fill_null("unknown")
             for category in sorted(mapping.keys()):
-                parts.append((labels == category).astype(int).rename(f"{col}__{category}"))
+                parts.append((labels == category).cast(pl.Int32).rename(f"{col}__{category}"))
 
         # Label encoding para columnas con muchos valores únicos (se dejan como enteros)
         if label_cols:
-            parts.append(chunk[label_cols].reset_index(drop=True))
+            parts.append(chunk.select(label_cols))
 
         # Columnas de listas se pasan sin cambios
         available_passthrough = [c for c in passthrough if c in chunk.columns]
         if available_passthrough:
-            parts.append(chunk[available_passthrough].reset_index(drop=True))
+            parts.append(chunk.select(available_passthrough))
 
         # Unir todas las partes en un solo DataFrame
-        result = pd.concat([p.reset_index(drop=True) for p in parts], axis=1)
-        result.to_csv(output_path, mode="w" if first_chunk else "a", header=first_chunk, index=False)
-        first_chunk = False
+        dfs = []
+        for p in parts:
+            if isinstance(p, pl.Series):
+                dfs.append(p.to_frame())
+            else:
+                dfs.append(p)
+        result = pl.concat(dfs, how="horizontal")
+
+        if first_chunk:
+            result.write_csv(output_path)
+            first_chunk = False
+        else:
+            with open(output_path, "a") as f:
+                f.write(result.write_csv(include_header=False))
         total_rows += len(result)
         log.info("  transform batch %d — %d filas", i + 1, total_rows)
 
@@ -127,12 +142,17 @@ def preprocessing():
         total_pca = 0
         first_chunk = True
 
-        for i, chunk in enumerate(pd.read_csv(INPUT_CSV, usecols=numeric_cols, chunksize=CHUNK_SIZE, low_memory=False)):
-            X_scaled = scaler.transform(chunk[numeric_cols].to_numpy(dtype=np.float64))
+        for i, chunk in enumerate(pl.scan_csv(INPUT_CSV)
+                                   .select(numeric_cols).collect_batches(chunk_size=CHUNK_SIZE)):
+            X_scaled = scaler.transform(chunk.to_numpy(allow_copy=True).astype(np.float64))
             X_pca    = ipca.transform(X_scaled)
-            pca_chunk = pd.DataFrame(X_pca, columns=pca_col_names)
-            pca_chunk.to_csv(pca_path, mode="w" if first_chunk else "a", header=first_chunk, index=False)
-            first_chunk = False
+            pca_chunk = pl.DataFrame(X_pca, schema=pca_col_names)
+            if first_chunk:
+                pca_chunk.write_csv(pca_path)
+                first_chunk = False
+            else:
+                with open(pca_path, "a") as f:
+                    f.write(pca_chunk.write_csv(include_header=False))
             total_pca += len(pca_chunk)
             log.info("  pca batch %d — %d filas", i + 1, total_pca)
 
@@ -142,11 +162,11 @@ def preprocessing():
         explained = ipca.explained_variance_ratio_
         pca_info  = {
             "components": pca_col_names,
-            "explained_variance_ratio": explained.tolist(),
+            "explained_variance_ratio": explained.tolist(),   # .tolist() convierte numpy → Python nativo
             "cumulative_variance_ratio": np.cumsum(explained).tolist(),
         }
-        with open(OUTPUT_DIR / "pca_explained_variance.json", "w") as f:
-            json.dump(pca_info, f, indent=2)
+        with open(OUTPUT_DIR / "pca_explained_variance.json", "wb") as f:
+            f.write(orjson.dumps(pca_info, option=orjson.OPT_INDENT_2))
         log.info("Varianza explicada acumulada con %d componentes: %.3f",
                  ipca.n_components_, pca_info["cumulative_variance_ratio"][-1])
 
@@ -158,8 +178,8 @@ def preprocessing():
 
     # Guardar las categorías usadas en OHE (para reproducir el encoding)
     ohe_mappings = {col: sorted(encodings[col].keys()) for col in ohe_cols if col in encodings}
-    with open(OUTPUT_DIR / "ohe_mappings.json", "w", encoding="utf-8") as f:
-        json.dump(ohe_mappings, f, indent=2, ensure_ascii=False)
+    with open(OUTPUT_DIR / "ohe_mappings.json", "wb") as f:
+        f.write(orjson.dumps(ohe_mappings, option=orjson.OPT_INDENT_2))
 
     # Guardar type_dict_encoding.json con los tipos post-preprocessing (nombres de columna reales)
     encoding_type_dict = {}
@@ -173,8 +193,8 @@ def preprocessing():
     for c in passthrough:
         if c in available_cols:
             encoding_type_dict[c] = "list_json"
-    with open(OUTPUT_DIR / "type_dict_encoding.json", "w", encoding="utf-8") as f:
-        json.dump(encoding_type_dict, f, indent=2, ensure_ascii=False)
+    with open(OUTPUT_DIR / "type_dict_encoding.json", "wb") as f:
+        f.write(orjson.dumps(encoding_type_dict, option=orjson.OPT_INDENT_2))
 
     log.info("Transformadores guardados: scaler.pkl, pca.pkl, ohe_mappings.json, type_dict_encoding.json")
 
